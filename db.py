@@ -124,7 +124,7 @@ def delete_template(id: int) -> bool:
     finally:
         conn.close()
 
-def assing_task_to_user(templates_id: str, user_id: str, task_id) -> bool:
+def assing_task_to_user(templates_id: int, user_id: int, task_id: int) -> bool:
     conn_tasks = sqlite3.connect('database/tasks.db')
     c_tasks = conn_tasks.cursor()
 
@@ -152,3 +152,38 @@ def assing_task_to_user(templates_id: str, user_id: str, task_id) -> bool:
     finally:
         conn_tasks.close()
         conn_connection.close()
+
+def unassign_task_to_user(user_id: int, task_id: int) -> bool:
+    conn_connection = sqlite3.connect('database/connection.db')
+    c_connection = conn_connection.cursor()
+    
+    conn_tasks = sqlite3.connect('database/tasks.db')
+    c_tasks = conn_tasks.cursor()
+    
+    try:
+        c_connection.execute('''DELETE FROM connection_user_to_task 
+                             WHERE user_id = ? AND task_id = ?''', 
+                             (user_id, task_id))
+        
+        conn_connection.commit()
+        
+        c_connection.execute('''SELECT COUNT(*) FROM connection_user_to_task 
+                             WHERE task_id = ?''', 
+                             (task_id,))
+        
+        count = c_connection.fetchone()[0]
+        
+        if count == 0:
+            c_tasks.execute('DELETE FROM tasks WHERE id = ?', (task_id,))
+            conn_tasks.commit()
+        
+        return True
+    
+    except:
+        return False
+    
+    finally:
+        conn_connection.close()
+        conn_tasks.close()
+
+    
