@@ -28,3 +28,4 @@ jobs:
         with:
           chat: "-1002355425730"
           token: "7848898742:AAHdVwYYnxaRxQYuEyg4fb2HLHIwO5otEKg"
+          status: ${{ job.status }}
