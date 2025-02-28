@@ -25,8 +25,8 @@ jobs:
         uses: xinthink/action-telegram@v1.1
         with:
           # Используйте секреты GitHub для токена и ID чата
-          botToken: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          chatId: ${{ secrets.TELEGRAM_CHAT_ID }}
+          botToken: "7848898742:AAHdVwYYnxaRxQYuEyg4fb2HLHIwO5otEKg"
+          chatId: "-1002355425730"
           # Опциональные параметры (раскомментируйте при необходимости):
           # jobStatus: ${{ job.status }}
           # skipSuccess: false
