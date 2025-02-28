@@ -11,7 +11,8 @@ def init_db():
 
     users_c.execute('''CREATE TABLE IF NOT EXISTS users
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     telegram_id TEXT NOT NULL''')
+                     telegram_id TEXT NOT NULL,
+                     selected_lab: TEXT DEFAULT NULL''')
     
     users_conn.commit()
     users_conn.close()
@@ -37,7 +38,8 @@ def init_db():
 
     labs_c.execute('''CREATE TABLE IF NOT EXISTS labs
                     (id TEXT NOT NULL,
-                     name TEXT NOT NULL''')
+                     name TEXT NOT NULL,
+                     creator_id TEXT NOT NULL''')
     
     labs_c.execute('''CREATE TABLE IF NOT EXISTS equipments
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -186,4 +188,100 @@ def unassign_task_to_user(user_id: int, task_id: int) -> bool:
         conn_connection.close()
         conn_tasks.close()
 
+def create_lab(name: str, creator_id: int) -> bool:
+    conn = sqlite3.connect('database/labs.db')
+    c = conn.cursor()
+
+    try:
+        c.execute('''INSERT INTO labs (name, creator_id)
+                     VALUES (?, ?)''',
+                 (name, creator_id))
+        
+        conn.commit()
+        return True
     
+    except:
+        return False
+    
+    finally:
+        conn.close()
+
+def delete_lab(id: int) -> bool:
+    conn = sqlite3.connect('database/labs.db')
+    c = conn.cursor()
+
+    try:
+        c.execute('DELETE FROM labs WHERE id = ?', (id))
+        
+        conn.commit()
+        return True
+    
+    except:
+        return False
+    
+    finally:
+        conn.close()
+
+def add_equipment(name: str, is_active: bool, lab_id: int) -> bool:
+    conn = sqlite3.connect('database/labs.db')
+    c = conn.cursor()
+
+    try:
+        c.execute('''INSERT INTO equipments (name, is_active, lab_id)
+                     VALUES (?, ?, ?)''',
+                 (name, is_active, lab_id))
+        
+        conn.commit()
+        return True
+    
+    except:
+        return False
+
+    finally:
+        conn.close()
+    
+def delete_equipment(id: int) -> bool:
+    conn = sqlite3.connect('database/labs.db')
+    c = conn.cursor()
+
+    try:
+        c.execute('DELETE FROM equipments WHERE id = ?', (id))
+        
+        conn.commit()
+        return True
+    
+    except:
+        return False
+
+    finally:
+        conn.close()
+
+def change_equipment_status(equipment_id: int) -> bool:
+    conn = sqlite3.connect('database/labs.db')
+    c = conn.cursor()
+
+    try:
+        c.execute('''SELECT is_active FROM equipments WHERE id = ?''', 
+                  (equipment_id,))
+        
+        result = c.fetchone()
+        if result is None:
+            return False 
+        
+        current_status = result[0]
+
+        new_status = 0 if current_status == 1 else 1
+
+        c.execute('''UPDATE equipments 
+                     SET is_active = ? 
+                     WHERE id = ?''', 
+                  (new_status, equipment_id))
+        
+        conn.commit()
+        return True
+    
+    except:
+        return False
+
+    finally:
+        conn.close()
