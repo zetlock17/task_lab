@@ -5,7 +5,7 @@ with open("bot_token.txt", "r") as file:
 
 bot = telebot.TeleBot(token, parse_mode="HTML")
 
-# TODO: add logic
+# TODO: add logic1
 def isFirstMessage(message):
     return True
 
