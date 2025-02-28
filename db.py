@@ -285,3 +285,60 @@ def change_equipment_status(equipment_id: int) -> bool:
 
     finally:
         conn.close()
+
+def add_reserve(user_id: int, equipment_id: int, start_time: str, end_time: str) -> bool:
+    conn = sqlite3.connect('database/labs.db')
+    c = conn.cursor()
+
+    try:
+        c.execute('''SELECT is_active FROM equipments WHERE id = ?''', 
+                  (equipment_id,))
+        
+        result = c.fetchone()
+        if result is None or result[0] == 0:
+            return False
+
+        c.execute('''SELECT COUNT(*) FROM reserve 
+                   WHERE equipment_id = ? AND 
+                   ((start_time <= ? AND end_time >= ?) OR 
+                    (start_time <= ? AND end_time >= ?) OR 
+                    (start_time >= ? AND end_time <= ?))''', 
+                  (equipment_id, start_time, start_time, end_time, end_time, start_time, end_time))
+        
+        if c.fetchone()[0] > 0:
+            return False
+        
+        c.execute('''INSERT INTO reserve (user_id, equipment_id, start_time, end_time)
+                   VALUES (?, ?, ?, ?)''',
+                 (user_id, equipment_id, start_time, end_time))
+        
+        conn.commit()
+        return True
+    
+    except:
+        return False
+    
+    finally:
+        conn.close()
+
+def delete_reserve(reserve_id: int) -> bool:
+    conn = sqlite3.connect('database/labs.db')
+    c = conn.cursor()
+
+    try:
+        c.execute('''SELECT COUNT(*) FROM reserve WHERE id = ?''', 
+                  (reserve_id,))
+        
+        if c.fetchone()[0] == 0: 
+            return False
+            
+        c.execute('DELETE FROM reserve WHERE id = ?', (reserve_id,))
+        
+        conn.commit()
+        return True
+    
+    except:
+        return False
+    
+    finally:
+        conn.close()
