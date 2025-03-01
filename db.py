@@ -93,6 +93,7 @@ def add_user(telegram_id: str) -> bool:
         conn.close()
 
 def create_template(name: str, description: str, stages: str) -> bool:
+    
     conn = sqlite3.connect('database/tasks.db')
     c = conn.cursor()
 
@@ -111,6 +112,7 @@ def create_template(name: str, description: str, stages: str) -> bool:
         conn.close()
 
 def delete_template(id: int) -> bool:
+
     conn = sqlite3.connect('database/tasks.db')
     c = conn.cursor()
 
@@ -127,6 +129,7 @@ def delete_template(id: int) -> bool:
         conn.close()
 
 def assing_task_to_user(templates_id: int, user_id: int, task_id: int) -> bool:
+
     conn_tasks = sqlite3.connect('database/tasks.db')
     c_tasks = conn_tasks.cursor()
 
@@ -156,6 +159,7 @@ def assing_task_to_user(templates_id: int, user_id: int, task_id: int) -> bool:
         conn_connection.close()
 
 def unassign_task_to_user(user_id: int, task_id: int) -> bool:
+
     conn_connection = sqlite3.connect('database/connection.db')
     c_connection = conn_connection.cursor()
     
@@ -189,6 +193,7 @@ def unassign_task_to_user(user_id: int, task_id: int) -> bool:
         conn_tasks.close()
 
 def create_lab(name: str, creator_id: int) -> bool:
+
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
@@ -207,6 +212,7 @@ def create_lab(name: str, creator_id: int) -> bool:
         conn.close()
 
 def delete_lab(id: int) -> bool:
+
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
@@ -223,6 +229,7 @@ def delete_lab(id: int) -> bool:
         conn.close()
 
 def add_equipment(name: str, is_active: bool, lab_id: int) -> bool:
+
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
@@ -241,6 +248,7 @@ def add_equipment(name: str, is_active: bool, lab_id: int) -> bool:
         conn.close()
     
 def delete_equipment(id: int) -> bool:
+
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
@@ -257,6 +265,7 @@ def delete_equipment(id: int) -> bool:
         conn.close()
 
 def change_equipment_status(equipment_id: int) -> bool:
+
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
@@ -287,6 +296,7 @@ def change_equipment_status(equipment_id: int) -> bool:
         conn.close()
 
 def add_reserve(user_id: int, equipment_id: int, start_time: str, end_time: str) -> bool:
+
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
@@ -322,6 +332,7 @@ def add_reserve(user_id: int, equipment_id: int, start_time: str, end_time: str)
         conn.close()
 
 def delete_reserve(reserve_id: int) -> bool:
+
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
@@ -339,6 +350,65 @@ def delete_reserve(reserve_id: int) -> bool:
     
     except:
         return False
+    
+    finally:
+        conn.close()
+
+def user_exists(user_id: int, task_id: int) -> bool:
+
+    conn = sqlite3.connect('database/connection.db')
+    c = conn.cursor()
+    
+    try:
+        c.execute('''SELECT COUNT(*) FROM connection_user_to_task 
+                   WHERE user_id = ? AND task_id = ?''', 
+                  (user_id, task_id))
+        
+        count = c.fetchone()[0]
+        return count > 0
+    except:
+        return False
+    
+    finally:
+        conn.close()
+
+def user_is_admin(user_id: int, lab_id: int) -> bool:
+
+    conn = sqlite3.connect('database/labs.db')
+    c = conn.cursor()
+    
+    try:
+        c.execute('''SELECT COUNT(*) FROM labs 
+                   WHERE id = ? AND creator_id = ?''', 
+                  (lab_id, user_id))
+        
+        count = c.fetchone()[0]
+        return count > 0
+    
+    except:
+        return False
+    
+    finally:
+        conn.close()
+
+def user_get_selected_lab_id(user_id: int) -> str:
+
+    conn = sqlite3.connect('database/users.db')
+    c = conn.cursor()
+    
+    try:
+        c.execute('''SELECT selected_lab FROM users 
+                   WHERE id = ?''', 
+                  (user_id,))
+        
+        result = c.fetchone()
+        if result is None:
+            return None
+            
+        return result[0]
+    
+    except:
+        return None
     
     finally:
         conn.close()
