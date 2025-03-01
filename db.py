@@ -224,14 +224,14 @@ def unassign_task_to_user(user_id: int, task_id: int):
         conn_connection.close()
         conn_tasks.close()
 
-def create_lab(name: str, creator_id: str):
+def create_lab(name: str, creator_id: str, admins: str):
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
     try:
-        c.execute('''INSERT INTO labs (name, creator_id)
+        c.execute('''INSERT INTO labs (name, admins)
                      VALUES (?, ?)''',
-                 (name, creator_id))
+                 (name, admins))
         
         conn.commit()
         return True
