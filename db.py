@@ -63,12 +63,12 @@ def init_db():
     connection_c.execute('''CREATE TABLE IF NOT EXISTS connection_user_to_task
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      user_id TEXT NOT NULL,
-                     task_id TEXT NOT NULL)''')
+                     task_id INTEGER NOT NULL)''')
     
     connection_c.execute('''CREATE TABLE IF NOT EXISTS connection_user_to_lab
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      user_id TEXT NOT NULL,
-                     lab_id TEXT NOT NULL)''')
+                     lab_id INTEGER NOT NULL)''')
     
     connection_conn.commit()
     connection_conn.close()
@@ -419,14 +419,18 @@ def user_is_admin(user_id: str) -> bool:
     finally:
         conn.close()
 
-def user_get_selected_lab_id(user_id: int) -> str:
-    conn = sqlite3.connect('database/users.db')
+def get_labname_by_id(lab_id: int) -> str:
+
+    if lab_id is None or lab_id == "":
+        return "Не выбрано"
+        
+    conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
     
     try:
-        c.execute('''SELECT selected_lab FROM users 
+        c.execute('''SELECT name FROM labs 
                    WHERE id = ?''', 
-                  (user_id,))
+                  (lab_id,))
         
         result = c.fetchone()
         if result is None:
