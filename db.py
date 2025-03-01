@@ -2,7 +2,6 @@ import os
 import sqlite3
 
 def init_db():
-
     if not os.path.exists('database'):
         os.makedirs('database')
 
@@ -12,7 +11,7 @@ def init_db():
     users_c.execute('''CREATE TABLE IF NOT EXISTS users
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      telegram_id TEXT NOT NULL,
-                     selected_lab: TEXT DEFAULT NULL''')
+                     selected_lab TEXT DEFAULT NULL)''')
     
     users_conn.commit()
     users_conn.close()
@@ -22,13 +21,13 @@ def init_db():
 
     tasks_c.execute('''CREATE TABLE IF NOT EXISTS tasks
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     templates_id INTEGER NOT NULL''')
+                     templates_id INTEGER NOT NULL)''')
     
     tasks_c.execute('''CREATE TABLE IF NOT EXISTS templates
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      name TEXT NOT NULL,
                      description TEXT NOT NULL,
-                     stages TEXT NOT NULL''')
+                     stages TEXT NOT NULL)''')
     
     tasks_conn.commit()
     tasks_conn.close()
@@ -37,51 +36,69 @@ def init_db():
     labs_c = labs_conn.cursor()
 
     labs_c.execute('''CREATE TABLE IF NOT EXISTS labs
-                    (id TEXT NOT NULL,
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      name TEXT NOT NULL,
-                     creator_id TEXT NOT NULL''')
+                     creator_id TEXT NOT NULL)''')
     
     labs_c.execute('''CREATE TABLE IF NOT EXISTS equipments
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      name TEXT NOT NULL,
-                     is_active INTEGER
-                     lab_id INTEGER NOT NULL''')
+                     is_active INTEGER NOT NULL,
+                     lab_id INTEGER NOT NULL)''')
     
     labs_c.execute('''CREATE TABLE IF NOT EXISTS reserve
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     user_id INTEGER NOT NULL
-                     start_time TEXT NOT NULL
-                     end_time TEXT NOT_NULL
-                     equipment_id INTEGER NOT NULL''')
+                     user_id INTEGER NOT NULL,
+                     start_time TEXT NOT NULL,
+                     end_time TEXT NOT NULL,
+                     equipment_id INTEGER NOT NULL)''')
     
     labs_conn.commit()
     labs_conn.close()
     
-    connection_conn = sqlite3.connect('database/labs.db')
+    connection_conn = sqlite3.connect('database/connection.db')
     connection_c = connection_conn.cursor()
 
     connection_c.execute('''CREATE TABLE IF NOT EXISTS connection_user_to_task
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      user_id TEXT NOT NULL,
-                     task_id TEXT NOT NULL''')
+                     task_id TEXT NOT NULL)''')
     
     connection_c.execute('''CREATE TABLE IF NOT EXISTS connection_user_to_lab
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      user_id TEXT NOT NULL,
-                     lab_id TEXT NOT NULL''')
+                     lab_id TEXT NOT NULL)''')
     
     connection_conn.commit()
     connection_conn.close()
     
-def add_user(telegram_id: str) -> bool:
+def is_user_registered(telegram_id: str) -> bool:
+    """Check if a user with the given telegram_id exists in the database"""
+    conn = sqlite3.connect('database/users.db')
+    c = conn.cursor()
+    
+    try:
+        c.execute('''SELECT COUNT(*) FROM users WHERE telegram_id = ?''', 
+                 (telegram_id,))
+        
+        count = c.fetchone()[0]
+        return count > 0
+    
+    except:
+        return False
+    
+    finally:
+        conn.close()
 
+def add_user(telegram_id: str) -> bool:
+    """Add a new user to the database"""
     conn = sqlite3.connect('database/users.db')
     c = conn.cursor()
 
     try:
         c.execute('''INSERT INTO users (telegram_id)
-                     VALUES (?, ?, ?)''',
-                 (telegram_id))
+                     VALUES (?)''',
+                 (telegram_id,))
         
         conn.commit()
         return True
@@ -92,8 +109,25 @@ def add_user(telegram_id: str) -> bool:
     finally:
         conn.close()
 
-def create_template(name: str, description: str, stages: str) -> bool:
+def is_user_admin_of_any_lab(telegram_id: str) -> bool:
+    """Check if the user is an admin of any lab"""
+    conn = sqlite3.connect('database/labs.db')
+    c = conn.cursor()
     
+    try:
+        c.execute('''SELECT COUNT(*) FROM labs WHERE creator_id = ?''', 
+                 (telegram_id,))
+        
+        count = c.fetchone()[0]
+        return count > 0
+    
+    except:
+        return False
+    
+    finally:
+        conn.close()
+
+def create_template(name: str, description: str, stages: str) -> bool:
     conn = sqlite3.connect('database/tasks.db')
     c = conn.cursor()
 
@@ -112,12 +146,11 @@ def create_template(name: str, description: str, stages: str) -> bool:
         conn.close()
 
 def delete_template(id: int) -> bool:
-
     conn = sqlite3.connect('database/tasks.db')
     c = conn.cursor()
 
     try:
-        c.execute('DELETE FROM templates WHERE id = ?', (id))
+        c.execute('DELETE FROM templates WHERE id = ?', (id,))
         
         conn.commit()
         return True
@@ -129,7 +162,6 @@ def delete_template(id: int) -> bool:
         conn.close()
 
 def assing_task_to_user(templates_id: int, user_id: int, task_id: int) -> bool:
-
     conn_tasks = sqlite3.connect('database/tasks.db')
     c_tasks = conn_tasks.cursor()
 
@@ -139,11 +171,11 @@ def assing_task_to_user(templates_id: int, user_id: int, task_id: int) -> bool:
     try:
         c_tasks.execute('''INSERT INTO tasks (templates_id)
                      VALUES (?)''',
-                    (templates_id))
+                    (templates_id,))
         
         conn_tasks.commit()
 
-        c_connection.execute('''INSERT INTO connection_user_to_task (user_id, template_id)
+        c_connection.execute('''INSERT INTO connection_user_to_task (user_id, task_id)
                         VALUES (?, ?)''',
                         (user_id, task_id))
         
@@ -159,7 +191,6 @@ def assing_task_to_user(templates_id: int, user_id: int, task_id: int) -> bool:
         conn_connection.close()
 
 def unassign_task_to_user(user_id: int, task_id: int) -> bool:
-
     conn_connection = sqlite3.connect('database/connection.db')
     c_connection = conn_connection.cursor()
     
@@ -192,8 +223,7 @@ def unassign_task_to_user(user_id: int, task_id: int) -> bool:
         conn_connection.close()
         conn_tasks.close()
 
-def create_lab(name: str, creator_id: int) -> bool:
-
+def create_lab(name: str, creator_id: str) -> bool:
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
@@ -212,12 +242,11 @@ def create_lab(name: str, creator_id: int) -> bool:
         conn.close()
 
 def delete_lab(id: int) -> bool:
-
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
     try:
-        c.execute('DELETE FROM labs WHERE id = ?', (id))
+        c.execute('DELETE FROM labs WHERE id = ?', (id,))
         
         conn.commit()
         return True
@@ -229,14 +258,16 @@ def delete_lab(id: int) -> bool:
         conn.close()
 
 def add_equipment(name: str, is_active: bool, lab_id: int) -> bool:
-
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
     try:
+        # Convert boolean to integer (1 for True, 0 for False)
+        is_active_int = 1 if is_active else 0
+        
         c.execute('''INSERT INTO equipments (name, is_active, lab_id)
                      VALUES (?, ?, ?)''',
-                 (name, is_active, lab_id))
+                 (name, is_active_int, lab_id))
         
         conn.commit()
         return True
@@ -248,12 +279,11 @@ def add_equipment(name: str, is_active: bool, lab_id: int) -> bool:
         conn.close()
     
 def delete_equipment(id: int) -> bool:
-
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
     try:
-        c.execute('DELETE FROM equipments WHERE id = ?', (id))
+        c.execute('DELETE FROM equipments WHERE id = ?', (id,))
         
         conn.commit()
         return True
@@ -265,7 +295,6 @@ def delete_equipment(id: int) -> bool:
         conn.close()
 
 def change_equipment_status(equipment_id: int) -> bool:
-
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
@@ -296,7 +325,6 @@ def change_equipment_status(equipment_id: int) -> bool:
         conn.close()
 
 def add_reserve(user_id: int, equipment_id: int, start_time: str, end_time: str) -> bool:
-
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
@@ -332,7 +360,6 @@ def add_reserve(user_id: int, equipment_id: int, start_time: str, end_time: str)
         conn.close()
 
 def delete_reserve(reserve_id: int) -> bool:
-
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
@@ -354,8 +381,7 @@ def delete_reserve(reserve_id: int) -> bool:
     finally:
         conn.close()
 
-def user_exists(user_id: int, task_id: int) -> bool:
-
+def user_task_exists(user_id: int, task_id: int) -> bool:
     conn = sqlite3.connect('database/connection.db')
     c = conn.cursor()
     
@@ -372,8 +398,7 @@ def user_exists(user_id: int, task_id: int) -> bool:
     finally:
         conn.close()
 
-def user_is_admin(user_id: int, lab_id: int) -> bool:
-
+def user_is_admin(user_id: str, lab_id: int) -> bool:
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
     
@@ -392,7 +417,6 @@ def user_is_admin(user_id: int, lab_id: int) -> bool:
         conn.close()
 
 def user_get_selected_lab_id(user_id: int) -> str:
-
     conn = sqlite3.connect('database/users.db')
     c = conn.cursor()
     
@@ -412,3 +436,43 @@ def user_get_selected_lab_id(user_id: int) -> str:
     
     finally:
         conn.close()
+
+def get_available_labs(user_id: str) -> list:
+    conn = sqlite3.connect('database/labs.db')
+    conn_connection = sqlite3.connect('database/connection.db')
+    c = conn.cursor()
+    c_connection = conn_connection.cursor()
+    
+    try:
+        # Get labs where user is creator (admin)
+        c.execute('''SELECT id, name FROM labs WHERE creator_id = ?''', 
+                 (user_id,))
+        
+        admin_labs = [(lab_id, lab_name, True) for lab_id, lab_name in c.fetchall()]
+        
+        # Get labs where user is a member (from connection table)
+        c_connection.execute('''SELECT lab_id FROM connection_user_to_lab 
+                             WHERE user_id = ?''', (user_id,))
+        
+        member_lab_ids = [row[0] for row in c_connection.fetchall()]
+        
+        # Get details of member labs
+        member_labs = []
+        if member_lab_ids:
+            placeholders = ','.join(['?' for _ in member_lab_ids])
+            c.execute(f'''SELECT id, name FROM labs 
+                       WHERE id IN ({placeholders}) 
+                       AND creator_id != ?''', 
+                     member_lab_ids + [user_id])
+            
+            member_labs = [(lab_id, lab_name, False) for lab_id, lab_name in c.fetchall()]
+        
+        # Combine both lists
+        return admin_labs + member_labs
+    
+    except:
+        return []
+    
+    finally:
+        conn.close()
+        conn_connection.close()
