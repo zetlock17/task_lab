@@ -38,7 +38,7 @@ def init_db():
     labs_c.execute('''CREATE TABLE IF NOT EXISTS labs
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      name TEXT NOT NULL,
-                     creator_id TEXT NOT NULL)''')
+                     admins TEXT NOT NULL)''')
     
     labs_c.execute('''CREATE TABLE IF NOT EXISTS equipments
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
