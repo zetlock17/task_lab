@@ -123,12 +123,12 @@ def is_user_admin_of_any_lab(telegram_id: str):
         return count > 0
     
     except:
-        return False
+        return 'error'
     
     finally:
         conn.close()
 
-def create_template(name: str, description: str, stages: str) -> bool:
+def create_template(name: str, description: str, stages: str):
     conn = sqlite3.connect('database/tasks.db')
     c = conn.cursor()
 
@@ -141,12 +141,12 @@ def create_template(name: str, description: str, stages: str) -> bool:
         return True
     
     except:
-        return False
+        return 'error'
     
     finally:
         conn.close()
 
-def delete_template(id: int) -> bool:
+def delete_template(id: int):
     conn = sqlite3.connect('database/tasks.db')
     c = conn.cursor()
 
@@ -157,12 +157,12 @@ def delete_template(id: int) -> bool:
         return True
     
     except:
-        return False
+        return 'error'
     
     finally:
         conn.close()
 
-def assing_task_to_user(templates_id: int, user_id: int, task_id: int) -> bool:
+def assing_task_to_user(templates_id: int, user_id: int, task_id: int):
     conn_tasks = sqlite3.connect('database/tasks.db')
     c_tasks = conn_tasks.cursor()
 
@@ -185,13 +185,13 @@ def assing_task_to_user(templates_id: int, user_id: int, task_id: int) -> bool:
         return True
     
     except:
-        return False
+        return 'error'
     
     finally:
         conn_tasks.close()
         conn_connection.close()
 
-def unassign_task_to_user(user_id: int, task_id: int) -> bool:
+def unassign_task_to_user(user_id: int, task_id: int):
     conn_connection = sqlite3.connect('database/connection.db')
     c_connection = conn_connection.cursor()
     
@@ -218,13 +218,13 @@ def unassign_task_to_user(user_id: int, task_id: int) -> bool:
         return True
     
     except:
-        return False
+        return 'error'
     
     finally:
         conn_connection.close()
         conn_tasks.close()
 
-def create_lab(name: str, creator_id: str) -> bool:
+def create_lab(name: str, creator_id: str):
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
@@ -237,12 +237,12 @@ def create_lab(name: str, creator_id: str) -> bool:
         return True
     
     except:
-        return False
+        return 'error'
     
     finally:
         conn.close()
 
-def delete_lab(id: int) -> bool:
+def delete_lab(id: int):
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
@@ -253,7 +253,7 @@ def delete_lab(id: int) -> bool:
         return True
     
     except:
-        return False
+        return 'error'
     
     finally:
         conn.close()
@@ -498,6 +498,33 @@ def user_get_selected_lab_id(user_id: str) -> str:
     
     except:
         return None
+    
+    finally:
+        conn.close()
+
+def user_set_admin(user_id: str, is_admin: bool):
+    conn = sqlite3.connect('database/users.db')
+    c = conn.cursor()
+    
+    try:
+        c.execute('''SELECT COUNT(*) FROM users WHERE telegram_id = ?''', 
+                 (user_id,))
+        
+        if c.fetchone()[0] == 0:
+            return False 
+    
+        is_admin_int = 1 if is_admin else 0
+        
+        c.execute('''UPDATE users 
+                     SET is_admin = ? 
+                     WHERE telegram_id = ?''', 
+                  (is_admin_int, user_id))
+        
+        conn.commit()
+        return True
+    
+    except:
+        return False
     
     finally:
         conn.close()
