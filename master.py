@@ -41,7 +41,7 @@ def firstMessageHandler(message):
 @bot.message_handler(commands=['main_menu'])
 def showMainMenu(message):
     available_labs = db.get_available_labs(str(message.from_user.id))
-    #db.user_select_lab(str(message.from_user.id), None)
+    db.user_select_lab(str(message.from_user.id), None)
     if available_labs:
         lab_buttons = {}
         for lab_id in available_labs:
@@ -67,7 +67,7 @@ def lab_menu(query):
         "Ссылка - приглашение": {"callback_data":f"link_to?{lab_id}"},
         "Создать задачу": {"callback_data": "create_task"}
     })
-    #db.user_select_lab(str(query.from_user.id), lab_id)
+    db.user_select_lab(str(query.from_user.id), int(lab_id))
     bot.send_message(query.from_user.id, f"Вы в меню лаборатории [id{lab_id}] <b>'{db.get_labname_by_id(lab_id)}'</b>. Что вы хотите сделать?",
                      reply_markup=markup)
     bot.answer_callback_query(query.id)
@@ -197,16 +197,16 @@ def admin_menu(message):
         "Список оборудования": {"callback_data": f"equipment_list?{lab_id}"}
     })
     bot.send_message(message.from_user.id, f"Добро пожаловать в админ-панель, {message.from_user.full_name}!\n"
-                                           f"Выбранная лаборатория: {db.get_labname_by_id(lab_id)}\n"
+                                           f"Выбранная лаборатория: [id{lab_id}] <b>'{db.get_labname_by_id(lab_id)}'</b>\n"
                                            f"Пожалуйста, выберите действие:",
                      reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda query: "add_equipment" in query.data
-                            and db.is_user_admin_of_lab(query.from_user.id,int(query.data.split('?')[1]))
-                            and db.user_get_selected_lab_id(str(query.from_user.id)) is not None)
+@bot.callback_query_handler(func=lambda query: "add_equipment" in query.data)
 def add_equipment_to_lab(query):
+    print(db.user_get_selected_lab_id(str(query.from_user.id)))
+    print(db.is_user_admin_of_lab(query.from_user.id,int(query.data.split('?')[1])))
     lab_id = int(query.data.split('?')[1])
-    bot.send_message(query.from_user.id, "Пожалуйста, <b>ответом</b> введите список оборудования в следующем формате: <i>название кол-во</i>, пример:\n\n"
+    bot.send_message(query.from_user.id, "Пожалуйста, <b>ответом</b> введите список оборудования в следующем формате: [<i>название кол-во</i>], пример:\n\n"
                                          f"Название 12\nНазвание_2 8\nНазвание_3 1\n...{lab_id}")
     bot.answer_callback_query(query.id)
 
@@ -214,9 +214,33 @@ def add_equipment_to_lab(query):
                      and "введите список оборудования" in message.reply_to_message.text
                      and 8076896158 == message.reply_to_message.from_user.id
                      and db.user_is_admin(str(message.from_user.id))
-                     and db.is_user_admin_of_lab(message.from_user.id ,int(message.reply_to_message.text[message.reply_to_message.text.rfind(".")+1:])))
+                     and db.is_user_admin_of_lab(str(message.from_user.id) ,int(message.reply_to_message.text[message.reply_to_message.text.rfind(".")+1:])))
 def add_equipment_list(message):
-    print(message.text.split('\n'))
+    lab_id = int(message.reply_to_message.text[message.reply_to_message.text.rfind(".")+1:])
+    lines = message.text.split('\n')
+    errors = []
+    for line in lines:
+        if len(line.split(' ')) != 2:
+            errors.append(line)
+            continue
+
+        try:
+            count = int(line.split(' ')[1])
+        except:
+            errors.append(line)
+            continue
+
+        for i in range(count):
+            status = db.add_equipment(telebot.util.escape(line.split(' ')[0]), True, lab_id)
+            if status == 'error':
+                errors.append(line)
+                continue
+
+    bot.send_message(message.from_user.id, f"Операция выполнена. Количество ошибок при выполнении: <b>{len(errors)}</b>:\n"
+                                           f"{'\n'.join(errors)}\n")
+
+
+
 
 db.user_set_admin("877702484", True)
 db.init_db()
