@@ -373,6 +373,54 @@ def change_equipment_status(equipment_id: int):
 
     finally:
         conn.close()
+    
+def get_equipment_list(lab_id: int) -> list:
+
+    conn = sqlite3.connect('database/labs.db')
+    c = conn.cursor()
+    
+    try:
+        c.execute('''SELECT id FROM equipments 
+                   WHERE lab_id = ?''', 
+                  (lab_id,))
+        
+        equipment_list = []
+        
+        return equipment_list
+    
+    except:
+        return []
+    
+    finally:
+        conn.close()
+
+def get_equipment_by_id(equipment_id: int) -> dict:
+    conn = sqlite3.connect('database/labs.db')
+    c = conn.cursor()
+    
+    try:
+        c.execute('''SELECT id, name, is_active, lab_id FROM equipments 
+                   WHERE id = ?''', 
+                  (equipment_id,))
+        
+        result = c.fetchone()
+        if result is None:
+            return None
+            
+        equipment = {
+            'id': result[0],
+            'name': result[1],
+            'is_active': bool(result[2]),
+            'lab_id': result[3]
+        }
+        
+        return equipment
+    
+    except:
+        return None
+    
+    finally:
+        conn.close()
 
 def add_reserve(user_id: int, equipment_id: int, start_time: str, end_time: str):
     conn = sqlite3.connect('database/labs.db')
@@ -581,6 +629,58 @@ def is_user_admin_of_lab(user_id: str, lab_id: int) -> bool:
     
     except json.JSONDecodeError:
         return False
+    except:
+        return False
+    
+    finally:
+        conn.close()
+
+def add_template(name: str, description: str, stages: list) -> int:
+
+    conn = sqlite3.connect('database/tasks.db')
+    c = conn.cursor()
+    
+    try:
+        stages_json = json.dumps(stages)
+        
+        c.execute('''INSERT INTO templates (name, description, stages)
+                     VALUES (?, ?, ?)''',
+                 (name, description, stages_json))
+        
+        conn.commit()
+        template_id = c.lastrowid
+        return template_id
+    
+    except:
+        return 'error'
+    
+    finally:
+        conn.close()
+
+def user_select_lab(user_id: str, lab_id: int) -> bool:
+    conn = sqlite3.connect('database/users.db')
+    c = conn.cursor()
+    
+    try:
+        c.execute('''SELECT COUNT(*) FROM users WHERE telegram_id = ?''', 
+                 (user_id,))
+        
+        if c.fetchone()[0] == 0:
+            return False
+
+        if lab_id is not None:
+            available_labs = get_available_labs(user_id)
+            if lab_id not in available_labs:
+                return False
+
+        c.execute('''UPDATE users 
+                     SET selected_lab = ? 
+                     WHERE telegram_id = ?''', 
+                  (lab_id, user_id))
+        
+        conn.commit()
+        return True
+    
     except:
         return False
     
