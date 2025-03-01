@@ -259,7 +259,7 @@ def create_lab(name: str, creator_id: str):
     try:
         c.execute('''INSERT INTO labs (name, admins)
                      VALUES (?, ?)''',
-                 (name, creator_id))
+                 (name, json.dumps([creator_id])))
         
         conn.commit()
         lab_id = c.lastrowid  
