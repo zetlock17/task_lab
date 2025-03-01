@@ -224,7 +224,7 @@ def unassign_task_to_user(user_id: int, task_id: int):
         conn_connection.close()
         conn_tasks.close()
 
-def create_lab(name: str, creator_id: str, admins: str):
+def create_lab(name: str, admins: str):
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
