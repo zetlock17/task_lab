@@ -73,7 +73,7 @@ def init_db():
     connection_conn.commit()
     connection_conn.close()
     
-def is_user_registered(telegram_id: str) -> bool:
+def is_user_registered(telegram_id: str):
 
     conn = sqlite3.connect('database/users.db')
     c = conn.cursor()
@@ -86,12 +86,12 @@ def is_user_registered(telegram_id: str) -> bool:
         return count > 0
     
     except:
-        return False
+        return 'error'
     
     finally:
         conn.close()
 
-def add_user(telegram_id: str) -> bool:
+def add_user(telegram_id: str):
 
     conn = sqlite3.connect('database/users.db')
     c = conn.cursor()
@@ -105,12 +105,12 @@ def add_user(telegram_id: str) -> bool:
         return True
     
     except:
-        return False
+        return 'error'
     
     finally:
         conn.close()
 
-def is_user_admin_of_any_lab(telegram_id: str) -> bool:
+def is_user_admin_of_any_lab(telegram_id: str):
     
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
@@ -479,3 +479,25 @@ def get_available_labs(user_id: str) -> list:
     finally:
         conn.close()
         conn_connection.close()
+
+def user_get_selected_lab_id(user_id: str) -> str:
+
+    conn = sqlite3.connect('database/users.db')
+    c = conn.cursor()
+    
+    try:
+        c.execute('''SELECT selected_lab FROM users 
+                   WHERE telegram_id = ?''', 
+                  (user_id,))
+        
+        result = c.fetchone()
+        if result is None:
+            return None
+            
+        return result[0]
+    
+    except:
+        return None
+    
+    finally:
+        conn.close()
