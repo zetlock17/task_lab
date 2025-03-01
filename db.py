@@ -480,39 +480,21 @@ def get_labname_by_id(lab_id: int) -> str:
         conn.close()
 
 def get_available_labs(user_id: str) -> list:
-    conn = sqlite3.connect('database/labs.db')
     conn_connection = sqlite3.connect('database/connection.db')
-    c = conn.cursor()
     c_connection = conn_connection.cursor()
     
     try:
-        c.execute('''SELECT id, name FROM labs WHERE creator_id = ?''', 
-                 (user_id,))
-        
-        admin_labs = [(lab_id, lab_name, True) for lab_id, lab_name in c.fetchall()]
-
         c_connection.execute('''SELECT lab_id FROM connection_user_to_lab 
-                             WHERE user_id = ?''', (user_id,))
+                                WHERE user_id = ?''', 
+                            (user_id,))
         
-        member_lab_ids = [row[0] for row in c_connection.fetchall()]
-
-        member_labs = []
-        if member_lab_ids:
-            placeholders = ','.join(['?' for _ in member_lab_ids])
-            c.execute(f'''SELECT id, name FROM labs 
-                       WHERE id IN ({placeholders}) 
-                       AND creator_id != ?''', 
-                     member_lab_ids + [user_id])
-            
-            member_labs = [(lab_id, lab_name, False) for lab_id, lab_name in c.fetchall()]
-
-        return admin_labs + member_labs
+        lab_ids = [row[0] for row in c_connection.fetchall()]
+        return lab_ids
     
     except:
         return []
     
     finally:
-        conn.close()
         conn_connection.close()
 
 def user_get_selected_lab_id(user_id: str) -> int:
