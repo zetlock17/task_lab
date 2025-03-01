@@ -91,7 +91,7 @@ def is_user_registered(telegram_id: str) -> bool:
         conn.close()
 
 def add_user(telegram_id: str) -> bool:
-    """Add a new user to the database"""
+
     conn = sqlite3.connect('database/users.db')
     c = conn.cursor()
 
@@ -110,7 +110,7 @@ def add_user(telegram_id: str) -> bool:
         conn.close()
 
 def is_user_admin_of_any_lab(telegram_id: str) -> bool:
-    """Check if the user is an admin of any lab"""
+    
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
     
@@ -262,7 +262,6 @@ def add_equipment(name: str, is_active: bool, lab_id: int) -> bool:
     c = conn.cursor()
 
     try:
-        # Convert boolean to integer (1 for True, 0 for False)
         is_active_int = 1 if is_active else 0
         
         c.execute('''INSERT INTO equipments (name, is_active, lab_id)
