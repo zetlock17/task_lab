@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import json
 
 def init_db():
     if not os.path.exists('database'):
@@ -555,6 +556,31 @@ def user_set_admin(user_id: str, is_admin: bool):
         conn.commit()
         return True
     
+    except:
+        return False
+    
+    finally:
+        conn.close()
+
+def is_user_admin_of_lab(user_id: str, lab_id: int) -> bool:
+    
+    conn = sqlite3.connect('database/labs.db')
+    c = conn.cursor()
+    
+    try:
+        c.execute('''SELECT admins FROM labs WHERE id = ?''', (lab_id,))
+        
+        result = c.fetchone()
+        if result is None:
+            return False
+
+        admins_json = result[0]
+        admin_ids = json.loads(admins_json)
+
+        return user_id in admin_ids
+    
+    except json.JSONDecodeError:
+        return False
     except:
         return False
     
