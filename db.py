@@ -11,7 +11,8 @@ def init_db():
     users_c.execute('''CREATE TABLE IF NOT EXISTS users
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                      telegram_id TEXT NOT NULL,
-                     selected_lab TEXT DEFAULT NULL)''')
+                     selected_lab TEXT DEFAULT NULL,
+                     is_admin INTEGER NOT NULL DEFAULT 0)''')
     
     users_conn.commit()
     users_conn.close()
@@ -73,7 +74,7 @@ def init_db():
     connection_conn.close()
     
 def is_user_registered(telegram_id: str) -> bool:
-    """Check if a user with the given telegram_id exists in the database"""
+
     conn = sqlite3.connect('database/users.db')
     c = conn.cursor()
     
@@ -397,17 +398,20 @@ def user_task_exists(user_id: int, task_id: int) -> bool:
     finally:
         conn.close()
 
-def user_is_admin(user_id: str, lab_id: int) -> bool:
-    conn = sqlite3.connect('database/labs.db')
+def user_is_admin(user_id: str) -> bool:
+    conn = sqlite3.connect('database/users.db')
     c = conn.cursor()
     
     try:
-        c.execute('''SELECT COUNT(*) FROM labs 
-                   WHERE id = ? AND creator_id = ?''', 
-                  (lab_id, user_id))
+        c.execute('''SELECT is_admin FROM users 
+                   WHERE telegram_id = ?''', 
+                  (user_id,))
         
-        count = c.fetchone()[0]
-        return count > 0
+        result = c.fetchone()
+        if result is None:
+            return False
+            
+        return result[0] == 1
     
     except:
         return False
