@@ -224,17 +224,51 @@ def unassign_task_to_user(user_id: int, task_id: int):
         conn_connection.close()
         conn_tasks.close()
 
-def create_lab(name: str, admins: str):
+def create_connection_user_to_lab(user_id: str, lab_id: int):
+
+    conn = sqlite3.connect('database/connection.db')
+    c = conn.cursor()
+    
+    try:
+        c.execute('''SELECT COUNT(*) FROM connection_user_to_lab 
+                   WHERE user_id = ? AND lab_id = ?''', 
+                  (user_id, lab_id))
+        
+        if c.fetchone()[0] > 0:
+            return True
+        
+        c.execute('''INSERT INTO connection_user_to_lab (user_id, lab_id)
+                     VALUES (?, ?)''',
+                 (user_id, lab_id))
+        
+        conn.commit()
+        return True
+    
+    except:
+        return 'error'
+    
+    finally:
+        conn.close()
+
+def create_lab(name: str, creator_id: str):
+
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
     try:
         c.execute('''INSERT INTO labs (name, admins)
                      VALUES (?, ?)''',
-                 (name, admins))
+                 (name, creator_id))
         
         conn.commit()
-        return True
+        lab_id = c.lastrowid  
+        
+        connection_result = create_connection_user_to_lab(creator_id, lab_id)
+        
+        if connection_result == 'error' or connection_result is False:
+            return 'error'
+        
+        return lab_id
     
     except:
         return 'error'
