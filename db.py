@@ -444,19 +444,16 @@ def get_available_labs(user_id: str) -> list:
     c_connection = conn_connection.cursor()
     
     try:
-        # Get labs where user is creator (admin)
         c.execute('''SELECT id, name FROM labs WHERE creator_id = ?''', 
                  (user_id,))
         
         admin_labs = [(lab_id, lab_name, True) for lab_id, lab_name in c.fetchall()]
-        
-        # Get labs where user is a member (from connection table)
+
         c_connection.execute('''SELECT lab_id FROM connection_user_to_lab 
                              WHERE user_id = ?''', (user_id,))
         
         member_lab_ids = [row[0] for row in c_connection.fetchall()]
-        
-        # Get details of member labs
+
         member_labs = []
         if member_lab_ids:
             placeholders = ','.join(['?' for _ in member_lab_ids])
@@ -466,8 +463,7 @@ def get_available_labs(user_id: str) -> list:
                      member_lab_ids + [user_id])
             
             member_labs = [(lab_id, lab_name, False) for lab_id, lab_name in c.fetchall()]
-        
-        # Combine both lists
+
         return admin_labs + member_labs
     
     except:
