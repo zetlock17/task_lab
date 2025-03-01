@@ -277,20 +277,35 @@ def create_lab(name: str, creator_id: str):
         conn.close()
 
 def delete_lab(id: int):
-    conn = sqlite3.connect('database/labs.db')
-    c = conn.cursor()
+    conn_labs = sqlite3.connect('database/labs.db')
+    c_labs = conn_labs.cursor()
 
+    conn_connection = sqlite3.connect('database/connection.db')
+    c_connection = conn_connection.cursor()
+    
     try:
-        c.execute('DELETE FROM labs WHERE id = ?', (id,))
+        c_labs.execute('SELECT id FROM equipments WHERE lab_id = ?', (id,))
+        equipment_ids = [row[0] for row in c_labs.fetchall()]
+
+        for equipment_id in equipment_ids:
+            c_labs.execute('DELETE FROM reserve WHERE equipment_id = ?', (equipment_id,))
+
+        c_labs.execute('DELETE FROM equipments WHERE lab_id = ?', (id,))
+
+        c_labs.execute('DELETE FROM labs WHERE id = ?', (id,))
         
-        conn.commit()
+        c_connection.execute('DELETE FROM connection_user_to_lab WHERE lab_id = ?', (id,))
+        
+        conn_labs.commit()
+        conn_connection.commit()
         return True
     
     except:
         return 'error'
     
     finally:
-        conn.close()
+        conn_labs.close()
+        conn_connection.close()
 
 def add_equipment(name: str, is_active: bool, lab_id: int):
     conn = sqlite3.connect('database/labs.db')
