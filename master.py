@@ -1,5 +1,4 @@
 from types import NoneType
-
 import telebot, json
 from telebot import types
 import db
@@ -65,8 +64,10 @@ def showMainMenu(message):
 def lab_menu(query):
     lab_id = query.data.split('?')[1]
     markup = telebot.util.quick_markup({
-        "Ссылка - приглашение": {"callback_data":f"link_to?{lab_id}"}
+        "Ссылка - приглашение": {"callback_data":f"link_to?{lab_id}"},
+        "Создать задачу": {"callback_data": "create_task"}
     })
+    
     bot.send_message(query.from_user.id, f"Вы в меню лаборатории [id{lab_id}] <b>'{db.get_labname_by_id(lab_id)}'</b>. Что вы хотите сделать?",
                      reply_markup=markup)
     bot.answer_callback_query(query.id)
@@ -78,6 +79,46 @@ def get_link_to_lab(query):
     bot.send_message(query.from_user.id, "Ссылка на присоединение к текущей лаборатории:\n"
                                          f"<code>t.me/task_lab_bot?start=lab_{lab_id}_{query.from_user.id}</code>\n"
                                          f"<i> (нажмите, что бы скопировать) </i>")
+
+@bot.callback_query_handler(func=lambda query: query.data == "create_task")
+
+def create_task(query):
+    bot.send_message(query.from_user.id, "Пожалуйста, введите название и описание <b>ответом</b> на сообщение\n<i>(Форматом:\nНазвание: (макс.длина = 100симв.)\nОписание: (максюдлина = 1500симв.))</i>:")
+    bot.answer_callback_query(query.id)
+
+@bot.message_handler(func=lambda message: type(message.reply_to_message) != NoneType
+                     and "введите название и описание" in message.reply_to_message.text
+                     and 8076896158 == message.reply_to_message.from_user.id)
+                     
+def apply_task_name_and_description(message):
+
+    lines = message.text.split("\n")
+
+    title = lines[0]
+    title_length = len(title)
+
+    description = lines[1]
+    description_length = len(description)
+
+    if len(lines) < 2:
+        bot.send_message(message.from_user.id, "Ошибка: Отсутсвует название или описание\n"
+                         f"Пожалуйста, введите название и описание <b>ответом</b> на сообщение\n<i>(Форматом:\nНазвание: (макс.длина = 100симв.)\nОписание: (максюдлина = 1500симв.))</i>:")
+
+    elif title_length > 100:
+        bot.send_message(message.from_user.id, f"Ошибка! название {title_length}/100 симв..\n"
+                    f"Пожалуйста, введите название и описание <b>ответом</b> на сообщение\n<i>(Форматом:\nНазвание: (макс.длина = 100симв.)\nОписание: (максюдлина = 1500симв.))</i>:")
+
+    elif description_length > 1500:
+        bot.send_message(message.from_user.id, f"Ошибка! описание {description_length}/1500 симв..\n"
+                    f"Пожалуйста, введите название и описание <b>ответом</b> на сообщение\n<i>(Форматом:\nНазвание: (макс.длина = 100симв.)\nОписание: (максюдлина = 1500симв.))</i>:")
+
+    else:
+        markup = telebot.util.quick_markup({
+        "Добавить шаги": {"callback_data":{"title": title, "description": description}},
+        "Завершить создание": {"callback_data": "create_task"}
+        })
+        bot.send_message(message.from_user.id, f"Название и описание сохранены, туперь введите шаги", reply_markup=markup)
+        
 
 @bot.message_handler(commands=['start'], func=lambda message: True)
 def process_invite(message):
@@ -160,8 +201,7 @@ def admin_menu(message):
                                            f"Выбранная лаборатория: {db.get_labname_by_id(lab_id)}\n"
                                            f"Пожалуйста, выберите действие:",
                      reply_markup=markup)
-
-db.delete_lab(4)
+db.user_set_admin("877702484", True)
 db.init_db()
 print('Bot initialized')
 bot.infinity_polling()
