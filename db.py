@@ -258,7 +258,7 @@ def delete_lab(id: int):
     finally:
         conn.close()
 
-def add_equipment(name: str, is_active: bool, lab_id: int) -> bool:
+def add_equipment(name: str, is_active: bool, lab_id: int):
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
@@ -273,12 +273,12 @@ def add_equipment(name: str, is_active: bool, lab_id: int) -> bool:
         return True
     
     except:
-        return False
+        return 'error'
 
     finally:
         conn.close()
     
-def delete_equipment(id: int) -> bool:
+def delete_equipment(id: int):
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
@@ -289,12 +289,12 @@ def delete_equipment(id: int) -> bool:
         return True
     
     except:
-        return False
+        return 'error'
 
     finally:
         conn.close()
 
-def change_equipment_status(equipment_id: int) -> bool:
+def change_equipment_status(equipment_id: int):
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
@@ -319,12 +319,12 @@ def change_equipment_status(equipment_id: int) -> bool:
         return True
     
     except:
-        return False
+        return "error"
 
     finally:
         conn.close()
 
-def add_reserve(user_id: int, equipment_id: int, start_time: str, end_time: str) -> bool:
+def add_reserve(user_id: int, equipment_id: int, start_time: str, end_time: str):
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
 
@@ -354,8 +354,8 @@ def add_reserve(user_id: int, equipment_id: int, start_time: str, end_time: str)
         return True
     
     except:
-        return False
-    
+        return "error"
+        
     finally:
         conn.close()
 
@@ -376,12 +376,12 @@ def delete_reserve(reserve_id: int) -> bool:
         return True
     
     except:
-        return False
-    
+        return "error"
+        
     finally:
         conn.close()
 
-def user_task_exists(user_id: int, task_id: int) -> bool:
+def user_task_exists(user_id: int, task_id: int):
     conn = sqlite3.connect('database/connection.db')
     c = conn.cursor()
     
@@ -392,13 +392,14 @@ def user_task_exists(user_id: int, task_id: int) -> bool:
         
         count = c.fetchone()[0]
         return count > 0
+    
     except:
-        return False
+        return "error"
     
     finally:
         conn.close()
 
-def user_is_admin(user_id: str) -> bool:
+def user_is_admin(user_id: str):
     conn = sqlite3.connect('database/users.db')
     c = conn.cursor()
     
@@ -414,7 +415,7 @@ def user_is_admin(user_id: str) -> bool:
         return result[0] == 1
     
     except:
-        return False
+        return "error"
     
     finally:
         conn.close()
@@ -480,7 +481,7 @@ def get_available_labs(user_id: str) -> list:
         conn.close()
         conn_connection.close()
 
-def user_get_selected_lab_id(user_id: str) -> str:
+def user_get_selected_lab_id(user_id: str) -> int:
 
     conn = sqlite3.connect('database/users.db')
     c = conn.cursor()
