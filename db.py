@@ -8,6 +8,7 @@ class Task:
         self.name = name
         self.description = description
         self.stages = stages
+        self.task_id = None
 
 def init_db():
     if not os.path.exists('database'):
@@ -60,7 +61,8 @@ def init_db():
                      user_id INTEGER NOT NULL,
                      start_time TEXT NOT NULL,
                      end_time TEXT NOT NULL,
-                     equipment_id INTEGER NOT NULL)''')
+                     equipment_id INTEGER NOT NULL,
+                     task_id INTEGER NOT NULL)''')
     
     labs_conn.commit()
     labs_conn.close()
@@ -306,7 +308,7 @@ def get_equipment_by_id(equipment_id: int) -> dict:
     finally:
         conn.close()
 
-def add_reserve(user_id: int, equipment_id: int, start_time: str, end_time: str):
+def add_reserve(user_id: int, equipment_id: int, start_time: str, end_time: str, task_id: int):
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
     try:
@@ -320,8 +322,9 @@ def add_reserve(user_id: int, equipment_id: int, start_time: str, end_time: str)
                   (equipment_id, start_time, start_time, end_time, end_time, start_time, end_time))
         if c.fetchone()[0] > 0:
             return False
-        c.execute('''INSERT INTO reserve (user_id, equipment_id, start_time, end_time) VALUES (?, ?, ?, ?)''',
-                  (user_id, equipment_id, start_time, end_time))
+        c.execute('''INSERT INTO reserve (user_id, equipment_id, start_time, end_time, task_id) 
+                     VALUES (?, ?, ?, ?, ?)''',
+                  (user_id, equipment_id, start_time, end_time, task_id))
         conn.commit()
         return True
     except:
@@ -490,14 +493,15 @@ def get_tasks_by_user_id(user_id: str) -> list:
         tasks = []
         c_connection.execute('''SELECT task_id FROM connection_user_to_task WHERE user_id = ?''', (user_id,))
         task_ids = [row[0] for row in c_connection.fetchall()]
-        for i in task_ids:
-            task_c_connection.execute('''SELECT templates_id FROM tasks WHERE id = ?''', (i,))
+        for task_id in task_ids:
+            task_c_connection.execute('''SELECT templates_id FROM tasks WHERE id = ?''', (task_id,))
             template_id = task_c_connection.fetchone()[0]
             task_c_connection.execute('''SELECT name, description, stages FROM templates WHERE id = ?''',
                                       (template_id,))
             name, description, stages_json = task_c_connection.fetchone()
             stages = json.loads(stages_json)
             task = Task(name=name, description=description, stages=stages)
+            task.task_id = task_id
             tasks.append(task)
         return tasks
     except:
@@ -547,12 +551,12 @@ def get_task_duration(task):
     branch_durations = [get_branch_duration(branch) for branch in task.stages]
     return max(branch_durations) if branch_durations else 0
 
+
 def find_available_slots(task, lab_id, start_date=None):
-    """Ищет доступные временные окна с учётом параллельных веток с 8:00 до 17:00."""
+    """Ищет доступные временные окна: первое 'впритык', второе до x:00/x:30, затем шаг 15 минут."""
     if start_date is None:
         start_date = datetime.now().replace(second=0, microsecond=0)
     
-    # Устанавливаем начало и конец рабочего дня
     day_start = start_date.replace(hour=8, minute=0, second=0, microsecond=0)
     day_end = start_date.replace(hour=17, minute=0, second=0, microsecond=0)
     
@@ -560,25 +564,31 @@ def find_available_slots(task, lab_id, start_date=None):
     if total_duration <= 0:
         return []
 
-    # Находим минимальную продолжительность шага для шага поиска
-    min_step_duration = float('inf')
-    for branch in task.stages:
-        for step in branch:
-            step_duration = sum(int(t.rstrip('ap')) for t in step["timing"])
-            min_step_duration = min(min_step_duration, step_duration)
-    step_size = max(1, min_step_duration)  # Шаг минимум 1 минута
 
-    equipment_usage = {}
-    for branch in task.stages:
+    equipment_usage = {}  # {equipment_name: [(start_offset, duration), ...]}
+    for branch_idx, branch in enumerate(task.stages):
         branch_offset = 0
+        if branch_idx > 0:
+            first_step = task.stages[0][0]
+            branch_offset = int(first_step["timing"][0].rstrip('a'))
         for step in branch:
-            equipment_id = get_equipment_id_by_name(step["equipment"], lab_id)
-            if equipment_id:
-                step_duration = sum(int(t.rstrip('ap')) for t in step["timing"])
-                if equipment_id not in equipment_usage:
-                    equipment_usage[equipment_id] = []
-                equipment_usage[equipment_id].append((branch_offset, step_duration))
-                branch_offset += step_duration
+            equipment_name = step["equipment"]
+            step_duration = sum(int(t.rstrip('ap')) for t in step["timing"])
+            if equipment_name not in equipment_usage:
+                equipment_usage[equipment_name] = []
+            equipment_usage[equipment_name].append((branch_offset, step_duration))
+            branch_offset += step_duration
+
+
+    conn = sqlite3.connect('database/labs.db')
+    c = conn.cursor()
+    equipment_instances = {}  # {equipment_name: [id1, id2, ...]}
+    c.execute('''SELECT id, name FROM equipments WHERE lab_id = ? AND is_active = 1''', (lab_id,))
+    for equip_id, equip_name in c.fetchall():
+        if equip_name not in equipment_instances:
+            equipment_instances[equip_name] = []
+        equipment_instances[equip_name].append(equip_id)
+    conn.close()
 
     available_slots = []
     current_time = day_start
@@ -587,51 +597,203 @@ def find_available_slots(task, lab_id, start_date=None):
         slot_end = current_time + timedelta(minutes=total_duration)
         is_slot_available = True
         
-        for equipment_id, usages in equipment_usage.items():
-            reservations = get_equipment_reservations(equipment_id)
+        for equipment_name, usages in equipment_usage.items():
+            if equipment_name not in equipment_instances:
+                is_slot_available = False
+                break
+            available_equip_ids = equipment_instances[equipment_name].copy()
+            used_equip_ids = set()
+
             for start_offset, duration in usages:
                 step_start = current_time + timedelta(minutes=start_offset)
                 step_end = step_start + timedelta(minutes=duration)
-                for res_start, res_end in reservations:
-                    res_start_dt = datetime.strptime(res_start, "%Y-%m-%d %H:%M")
-                    res_end_dt = datetime.strptime(res_end, "%Y-%m-%d %H:%M")
-                    if (step_start < res_end_dt and step_end > res_start_dt):
-                        is_slot_available = False
-                        break
-                if not is_slot_available:
+                assigned = False
+
+                for equip_id in available_equip_ids:
+                    if equip_id not in used_equip_ids:
+                        reservations = get_equipment_reservations(equip_id)
+                        is_free = True
+                        for res_start, res_end in reservations:
+                            res_start_dt = datetime.strptime(res_start, "%Y-%m-%d %H:%M")
+                            res_end_dt = datetime.strptime(res_end, "%Y-%m-%d %H:%M")
+                            if step_start < res_end_dt and step_end > res_start_dt:
+                                is_free = False
+                                break
+                        if is_free:
+                            used_equip_ids.add(equip_id)
+                            assigned = True
+                            break
+                if not assigned:
+                    is_slot_available = False
                     break
             if not is_slot_available:
                 break
-        
+
         if is_slot_available:
             available_slots.append((current_time, slot_end))
-        current_time += timedelta(minutes=step_size)  # Используем динамический шаг
+            if len(available_slots) == 1:
+                minutes = current_time.minute
+                if minutes < 30:
+                    current_time = current_time.replace(minute=30, second=0, microsecond=0) - timedelta(minutes=minutes)
+                else:
+                    current_time = current_time.replace(hour=current_time.hour+1, minute=0, second=0, microsecond=0) - timedelta(minutes=minutes)
+            elif len(available_slots) > 1:
+                current_time += timedelta(minutes=15)
+        else:
+            current_time += timedelta(minutes=1)
     
     return available_slots
 
-
 def reserve_task_equipment(user_id, task, lab_id, start_time, end_time):
-    """Бронирует оборудование для задачи с учётом параллельных веток."""
+    """Бронирует оборудование для задачи с учётом параллельных веток и нескольких единиц оборудования."""
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
     try:
-        for branch in task.stages:
-            branch_offset = 0
-            for step in branch:
-                equipment_id = get_equipment_id_by_name(step["equipment"], lab_id)
-                if equipment_id:
-                    step_duration = sum(int(t.rstrip('ap')) for t in step["timing"])
-                    step_start = start_time + timedelta(minutes=branch_offset)
-                    step_end = step_start + timedelta(minutes=step_duration)
-                    c.execute('''INSERT INTO reserve (user_id, equipment_id, start_time, end_time)
-                                 VALUES (?, ?, ?, ?)''',
-                              (user_id, equipment_id, step_start.strftime("%Y-%m-%d %H:%M"),
-                               step_end.strftime("%Y-%m-%d %H:%M")))
-                    branch_offset += step_duration
+
+        conn_connection = sqlite3.connect('database/connection.db')
+        c_connection = conn_connection.cursor()
+        conn_tasks = sqlite3.connect('database/tasks.db')
+        c_tasks = conn_tasks.cursor()
+
+        c_connection.execute('''SELECT task_id FROM connection_user_to_task WHERE user_id = ?''', (user_id,))
+        task_ids = [row[0] for row in c_connection.fetchall()]
+        task_id = None
+        stages_json = json.dumps(task.stages)
+        for tid in task_ids:
+            c_tasks.execute('''SELECT templates_id FROM tasks WHERE id = ?''', (tid,))
+            templates_id = c_tasks.fetchone()[0]
+            c_tasks.execute('''SELECT stages FROM templates WHERE id = ?''', (templates_id,))
+            stored_stages = c_tasks.fetchone()[0]
+            if stored_stages == stages_json:
+                task_id = tid
+                break
+
+        if task_id is None:
+            raise ValueError("Could not find matching task_id for the given task.")
+
+        conn_connection.close()
+        conn_tasks.close()
+
+        first_branch_active_end = None
+        branch_offsets = [0] * len(task.stages)
+        used_equipment = {}  # {equipment_name: [equipment_id, ...]}
+
+        for branch_idx, branch in enumerate(task.stages):
+            for step_idx, step in enumerate(branch):
+                equipment_name = step["equipment"]
+
+                c.execute('''SELECT id FROM equipments WHERE name = ? AND lab_id = ? AND is_active = 1''',
+                          (equipment_name, lab_id))
+                equipment_ids = [row[0] for row in c.fetchall()]
+                if not equipment_ids:
+                    raise ValueError(f"No equipment '{equipment_name}' found in lab {lab_id}")
+
+                active_time = int(step["timing"][0].rstrip('a'))
+                passive_time = int(step["timing"][1].rstrip('p'))
+                processing_time = int(step["timing"][2].rstrip('a'))
+                step_duration = active_time + passive_time + processing_time
+
+
+                if branch_idx == 0 and step_idx == 0:
+                    step_start = start_time
+                    first_branch_active_end = start_time + timedelta(minutes=active_time)
+                elif step_idx == 0 and branch_idx > 0:
+                    step_start = first_branch_active_end if first_branch_active_end else start_time
+                else:
+                    step_start = start_time + timedelta(minutes=branch_offsets[branch_idx])
+
+                step_end = step_start + timedelta(minutes=step_duration)
+
+
+                equipment_id = None
+                for eid in equipment_ids:
+                    reservations = get_equipment_reservations(eid)
+                    is_free = True
+                    for res_start, res_end in reservations:
+                        res_start_dt = datetime.strptime(res_start, "%Y-%m-%d %H:%M")
+                        res_end_dt = datetime.strptime(res_end, "%Y-%m-%d %H:%M")
+                        if step_start < res_end_dt and step_end > res_start_dt:
+                            is_free = False
+                            break
+                    if is_free:
+                        equipment_id = eid
+                        break
+                
+                if equipment_id is None:
+                    raise ValueError(f"No available '{equipment_name}' for time {step_start} - {step_end}")
+
+                if equipment_name not in used_equipment:
+                    used_equipment[equipment_name] = []
+                used_equipment[equipment_name].append(equipment_id)
+
+                c.execute('''INSERT INTO reserve (user_id, equipment_id, start_time, end_time, task_id)
+                             VALUES (?, ?, ?, ?, ?)''',
+                          (user_id, equipment_id, step_start.strftime("%Y-%m-%d %H:%M"),
+                           step_end.strftime("%Y-%m-%d %H:%M"), task_id))
+
+                branch_offsets[branch_idx] = (step_end - start_time).total_seconds() / 60
+
         conn.commit()
         return True
-    except:
+    except Exception as e:
+        print(f"Error in reserve_task_equipment: {e}")
         conn.rollback()
         return False
+    finally:
+        conn.close()
+
+def get_user_reservations(user_id):
+    """Возвращает список забронированных шагов пользователя в хронологическом порядке."""
+    conn = sqlite3.connect('database/labs.db')
+    c = conn.cursor()
+    try:
+        c.execute('''SELECT r.id, r.start_time, r.end_time, r.equipment_id, r.task_id 
+                     FROM reserve r 
+                     WHERE r.user_id = ? 
+                     ORDER BY r.start_time''', (user_id,))
+        reservations = c.fetchall()
+
+        tasks = get_tasks_by_user_id(user_id)
+        reserved_steps = []
+
+        for res_id, start_time, end_time, equipment_id, task_id in reservations:
+            start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M")
+            end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M")
+            equipment = get_equipment_by_id(equipment_id)
+            if not equipment:
+                continue
+
+            for task in tasks:
+                if task_id in [t.task_id for t in get_tasks_by_user_id(user_id)]:
+                    for branch in task.stages:
+                        for step in branch:
+                            if step["equipment"] == equipment["name"]:
+                                step_duration = sum(int(t.rstrip('ap')) for t in step["timing"])
+                                if abs((end_dt - start_dt).total_seconds() / 60 - step_duration) < 1:
+                                    reserved_steps.append({
+                                        "task_name": task.name,
+                                        "step_name": step["name"],
+                                        "equipment": step["equipment"],
+                                        "start_time": start_dt,
+                                        "end_time": end_dt
+                                    })
+                                    break
+
+        reserved_steps.sort(key=lambda x: x["start_time"])
+        return reserved_steps
+    except Exception as e:
+        print(f"Error in get_user_reservations: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_all_users():
+    conn = sqlite3.connect('database/users.db')
+    c = conn.cursor()
+    try:
+        c.execute('''SELECT telegram_id FROM users''')
+        return [row[0] for row in c.fetchall()]
+    except:
+        return []
     finally:
         conn.close()

@@ -4,6 +4,9 @@ from datetime import datetime
 import db
 import os
 from dotenv import load_dotenv
+import threading
+import time
+
 
 load_dotenv()
 
@@ -58,7 +61,8 @@ def lab_menu(query):
     markup = telebot.util.quick_markup({
         "Ссылка - приглашение": {"callback_data": f"link_to?{lab_id}"},
         "Создать задачу": {"callback_data": "create_task"},
-        "Список задач": {"callback_data": "task_list"}
+        "Список задач": {"callback_data": "task_list"},
+        "Мои задачи": {"callback_data": f"my_tasks?{lab_id}"}
     })
     db.user_select_lab(str(query.from_user.id), int(lab_id))
     bot.send_message(query.from_user.id, f"Вы в меню лаборатории [id{lab_id}] <b>'{db.get_labname_by_id(lab_id)}'</b>. Что вы хотите сделать?",
@@ -82,7 +86,7 @@ def create_task(query):
 
 @bot.message_handler(func=lambda message: type(message.reply_to_message) != NoneType
                      and "введите название и описание" in message.reply_to_message.text
-                     and 8076896158 == message.reply_to_message.from_user.id)
+                     and 8127922870 == message.reply_to_message.from_user.id)
 def apply_task_name_and_description(message):
     def msg():
         bot.send_message(message.from_user.id, "Пожалуйста, введите название и описание <b>ответом</b> на сообщение в следующем формате:\nНазвание...\nОписание...")
@@ -136,7 +140,7 @@ def add_step(query):
 
 @bot.message_handler(func=lambda message: type(message.reply_to_message) != NoneType
                      and "Введите данные для шага" in message.reply_to_message.text
-                     and 8076896158 == message.reply_to_message.from_user.id)
+                     and 8127922870 == message.reply_to_message.from_user.id)
 def apply_step_data(message):
     user_id = str(message.from_user.id)
     lines = message.text.split("\n")
@@ -152,8 +156,7 @@ def apply_step_data(message):
         bot.send_message(message.from_user.id, f"Ошибка: Название слишком длинное ({len(name)}/100 символов).")
         add_step_helper(user_id)
         return
-    
-    # Проверка наличия оборудования в выбранной лаборатории
+
     lab_id = db.user_get_selected_lab_id(user_id)
     if not lab_id:
         bot.send_message(message.from_user.id, "Ошибка: Сначала выберите лабораторию.")
@@ -166,7 +169,6 @@ def apply_step_data(message):
         add_step_helper(user_id)
         return
     
-    # Извлечение активного времени
     if not active_time_str.startswith("Активное время: "):
         bot.send_message(message.from_user.id, "Ошибка: Строка должна начинаться с 'Активное время: '.")
         add_step_helper(user_id)
@@ -180,7 +182,6 @@ def apply_step_data(message):
         add_step_helper(user_id)
         return
 
-    # Извлечение времени ожидания
     if not passive_time_str.startswith("Время ожидания: "):
         bot.send_message(message.from_user.id, "Ошибка: Строка должна начинаться с 'Время ожидания: '.")
         add_step_helper(user_id)
@@ -194,7 +195,6 @@ def apply_step_data(message):
         add_step_helper(user_id)
         return
 
-    # Извлечение времени обработки
     if not processing_time_str.startswith("Время обработки: "):
         bot.send_message(message.from_user.id, "Ошибка: Строка должна начинаться с 'Время обработки: '.")
         add_step_helper(user_id)
@@ -208,7 +208,6 @@ def apply_step_data(message):
         add_step_helper(user_id)
         return
 
-    # Если всё в порядке, добавляем шаг
     timing = [f"{active_time}a", f"{passive_time}p", f"{processing_time}a"]
     step = {"name": name, "equipment": equipment, "timing": timing}
     user_steps[user_id].append(step)
@@ -252,7 +251,7 @@ def finish_steps(query):
 
 @bot.message_handler(func=lambda message: type(message.reply_to_message) != NoneType
                      and "Теперь укажите порядок выполнения" in message.reply_to_message.text
-                     and 8076896158 == message.reply_to_message.from_user.id)
+                     and 8127922870 == message.reply_to_message.from_user.id)
 def apply_step_order(message):
     user_id = str(message.from_user.id)
     lines = message.text.split("\n")
@@ -339,11 +338,10 @@ def task_details(query):
         bot.answer_callback_query(query.id)
         return
     
-    # Отображаем все доступные слоты
     buttons = {
         f"{slot[0].strftime('%H:%M')} - {slot[1].strftime('%H:%M')}": 
         {"callback_data": f"reserve_{task_index}_{slot[0].strftime('%Y%m%d%H%M')}_{slot[1].strftime('%Y%m%d%H%M')}"}
-        for slot in available_slots  # Убрано [:5]
+        for slot in available_slots
     }
     markup = telebot.util.quick_markup(buttons)
     
@@ -408,7 +406,7 @@ def create_lab(query):
 
 @bot.message_handler(func=lambda message: type(message.reply_to_message) != NoneType
                      and "введите название лаборатории" in message.reply_to_message.text
-                     and 8076896158 == message.reply_to_message.from_user.id
+                     and 8127922870 == message.reply_to_message.from_user.id
                      and db.user_is_admin(str(message.from_user.id)))
 def apply_lab_name(message):
     if len(message.text) > 100:
@@ -452,7 +450,7 @@ def add_equipment_to_lab(query):
 
 @bot.message_handler(func=lambda message: type(message.reply_to_message) != NoneType
                      and "введите список оборудования" in message.reply_to_message.text
-                     and 8076896158 == message.reply_to_message.from_user.id
+                     and 8127922870 == message.reply_to_message.from_user.id
                      and db.user_is_admin(str(message.from_user.id))
                      and db.is_user_admin_of_lab(str(message.from_user.id), int(message.reply_to_message.text[message.reply_to_message.text.rfind(".")+1:])))
 def add_equipment_list(message):
@@ -476,6 +474,42 @@ def add_equipment_list(message):
     bot.send_message(message.from_user.id, f"Операция выполнена. Количество ошибок при выполнении: <b>{len(errors)}</b>:\n"
                                            f"{'\n'.join(errors)}\n")
 
+@bot.callback_query_handler(func=lambda query: query.data.startswith("my_tasks"))
+def my_tasks(query):
+    user_id = str(query.from_user.id)
+    lab_id = int(query.data.split('?')[1])
+    reserved_steps = db.get_user_reservations(user_id)
+    
+    if not reserved_steps:
+        bot.send_message(query.from_user.id, "У вас нет забронированных шагов.")
+    else:
+        response = "<b>Ваши забронированные шаги (в порядке выполнения):</b>\n\n"
+        now = datetime.now()
+        for step in reserved_steps:
+            start_str = step["start_time"].strftime('%H:%M')
+            end_str = step["end_time"].strftime('%H:%M')
+            time_to_start = (step["start_time"] - now).total_seconds() / 60
+            time_str = f"{int(time_to_start)} мин до начала" if time_to_start > 0 else "уже началось"
+            response += f"{step['step_name']} ({step['equipment']}): {start_str} – {end_str} ({time_str})\n"
+        bot.send_message(query.from_user.id, response, parse_mode="HTML")
+    
+    bot.answer_callback_query(query.id)
+
+
+def check_reservations():
+    """Проверяет время до начала шагов и отправляет уведомления за 3 минуты."""
+    while True:
+        now = datetime.now()
+        for user_id in db.get_all_users():
+            reserved_steps = db.get_user_reservations(user_id)
+            for step in reserved_steps:
+                time_to_start = (step["start_time"] - now).total_seconds() / 60
+                if 2 <= time_to_start <= 4:
+                    bot.send_message(user_id, f"Напоминание: Шаг '{step['step_name']}' ({step['equipment']}) начнётся через 3 минуты в {step['start_time'].strftime('%H:%M')}!")
+        time.sleep(30)
+
+notification_thread = threading.Thread(target=check_reservations, daemon=True)
+notification_thread.start()
 
 db.init_db()
 db.user_set_admin("877702484", True)
