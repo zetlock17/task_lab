@@ -163,7 +163,8 @@ def delete_template(id: int):
     finally:
         conn.close()
 
-def assing_task_to_user(templates_id: int, user_id: int, task_id: int):
+
+def assing_task_to_user(templates_id: int, user_id: str):
     conn_tasks = sqlite3.connect('database/tasks.db')
     c_tasks = conn_tasks.cursor()
 
@@ -176,7 +177,7 @@ def assing_task_to_user(templates_id: int, user_id: int, task_id: int):
                     (templates_id,))
         
         conn_tasks.commit()
-
+        task_id = c_tasks.lastrowid
         c_connection.execute('''INSERT INTO connection_user_to_task (user_id, task_id)
                         VALUES (?, ?)''',
                         (user_id, task_id))
