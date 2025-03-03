@@ -474,6 +474,28 @@ def add_equipment_list(message):
     bot.send_message(message.from_user.id, f"Операция выполнена. Количество ошибок при выполнении: <b>{len(errors)}</b>:\n"
                                            f"{'\n'.join(errors)}\n")
 
+@bot.callback_query_handler(func=lambda query: query.data.startswith("equipment_list"))
+def equipment_list(query):
+    user_id = str(query.from_user.id)
+    lab_id = int(query.data.split('?')[1])
+    
+    if not db.is_user_admin_of_lab(user_id, lab_id):
+        bot.send_message(query.from_user.id, "У вас нет прав для просмотра оборудования этой лаборатории.")
+        bot.answer_callback_query(query.id)
+        return
+    
+    equipment_summary = db.get_equipment_summary_by_lab(lab_id)
+    
+    if not equipment_summary:
+        bot.send_message(query.from_user.id, "В лаборатории [id{}] нет активного оборудования.".format(lab_id))
+    else:
+        response = f"Список оборудования в лаборатории [id{lab_id}] '{db.get_labname_by_id(lab_id)}':\n\n"
+        for name, count in equipment_summary.items():
+            response += f"{name}: {count}\n"
+        bot.send_message(query.from_user.id, response)
+    
+    bot.answer_callback_query(query.id)
+
 @bot.callback_query_handler(func=lambda query: query.data.startswith("my_tasks"))
 def my_tasks(query):
     user_id = str(query.from_user.id)

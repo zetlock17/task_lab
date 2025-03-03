@@ -838,3 +838,19 @@ def get_all_users():
         return []
     finally:
         conn.close()
+
+def get_equipment_summary_by_lab(lab_id):
+    """Возвращает словарь с количеством оборудования по названию для указанной лаборатории."""
+    conn = sqlite3.connect('database/labs.db')
+    c = conn.cursor()
+    try:
+        c.execute('''SELECT name, COUNT(*) as count 
+                     FROM equipments 
+                     WHERE lab_id = ? AND is_active = 1 
+                     GROUP BY name''', (lab_id,))
+        result = {row[0]: row[1] for row in c.fetchall()}
+        return result
+    except:
+        return {}
+    finally:
+        conn.close()
