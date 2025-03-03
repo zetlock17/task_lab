@@ -553,18 +553,19 @@ def get_task_duration(task):
 
 
 def find_available_slots(task, lab_id, start_date=None):
-    """Ищет доступные временные окна: первое 'впритык', второе до x:00/x:30, затем шаг 15 минут."""
+    """Ищет доступные временные окна с использованием reserve_task_equipment для длительности."""
     if start_date is None:
         start_date = datetime.now().replace(second=0, microsecond=0)
     
     day_start = start_date.replace(hour=8, minute=0, second=0, microsecond=0)
     day_end = start_date.replace(hour=17, minute=0, second=0, microsecond=0)
-    
-    total_duration = get_task_duration(task)
-    if total_duration <= 0:
+
+    # Моделируем задачу для получения реальной длительности
+    total_duration = reserve_task_equipment(None, task, lab_id, datetime(2023, 1, 1, 0, 0), None, dry_run=True)
+    if not total_duration or total_duration <= 0:
         return []
 
-
+    # Собираем информацию о шагах и оборудовании (только для проверки доступности)
     equipment_usage = {}  # {equipment_name: [(start_offset, duration), ...]}
     for branch_idx, branch in enumerate(task.stages):
         branch_offset = 0
@@ -579,7 +580,7 @@ def find_available_slots(task, lab_id, start_date=None):
             equipment_usage[equipment_name].append((branch_offset, step_duration))
             branch_offset += step_duration
 
-
+    # Получаем все экземпляры оборудования для лаборатории
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
     equipment_instances = {}  # {equipment_name: [id1, id2, ...]}
@@ -634,9 +635,11 @@ def find_available_slots(task, lab_id, start_date=None):
             if len(available_slots) == 1:
                 minutes = current_time.minute
                 if minutes < 30:
-                    current_time = current_time.replace(minute=30, second=0, microsecond=0) - timedelta(minutes=minutes)
+                    delta_to_30 = 30 - minutes
+                    current_time += timedelta(minutes=delta_to_30)
                 else:
-                    current_time = current_time.replace(hour=current_time.hour+1, minute=0, second=0, microsecond=0) - timedelta(minutes=minutes)
+                    delta_to_next_hour = 60 - minutes
+                    current_time += timedelta(minutes=delta_to_next_hour)
             elif len(available_slots) > 1:
                 current_time += timedelta(minutes=15)
         else:
@@ -644,44 +647,48 @@ def find_available_slots(task, lab_id, start_date=None):
     
     return available_slots
 
-def reserve_task_equipment(user_id, task, lab_id, start_time, end_time):
-    """Бронирует оборудование для задачи с учётом параллельных веток и нескольких единиц оборудования."""
+
+def reserve_task_equipment(user_id, task, lab_id, start_time, end_time, dry_run=False):
+    """Бронирует оборудование или моделирует размещение шагов с учётом последовательности ветки."""
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
     try:
+        # Получаем task_id (только если не dry_run)
+        if not dry_run:
+            conn_connection = sqlite3.connect('database/connection.db')
+            c_connection = conn_connection.cursor()
+            conn_tasks = sqlite3.connect('database/tasks.db')
+            c_tasks = conn_tasks.cursor()
 
-        conn_connection = sqlite3.connect('database/connection.db')
-        c_connection = conn_connection.cursor()
-        conn_tasks = sqlite3.connect('database/tasks.db')
-        c_tasks = conn_tasks.cursor()
+            c_connection.execute('''SELECT task_id FROM connection_user_to_task WHERE user_id = ?''', (user_id,))
+            task_ids = [row[0] for row in c_connection.fetchall()]
+            task_id = None
+            stages_json = json.dumps(task.stages)
+            for tid in task_ids:
+                c_tasks.execute('''SELECT templates_id FROM tasks WHERE id = ?''', (tid,))
+                templates_id = c_tasks.fetchone()[0]
+                c_tasks.execute('''SELECT stages FROM templates WHERE id = ?''', (templates_id,))
+                stored_stages = c_tasks.fetchone()[0]
+                if stored_stages == stages_json:
+                    task_id = tid
+                    break
 
-        c_connection.execute('''SELECT task_id FROM connection_user_to_task WHERE user_id = ?''', (user_id,))
-        task_ids = [row[0] for row in c_connection.fetchall()]
-        task_id = None
-        stages_json = json.dumps(task.stages)
-        for tid in task_ids:
-            c_tasks.execute('''SELECT templates_id FROM tasks WHERE id = ?''', (tid,))
-            templates_id = c_tasks.fetchone()[0]
-            c_tasks.execute('''SELECT stages FROM templates WHERE id = ?''', (templates_id,))
-            stored_stages = c_tasks.fetchone()[0]
-            if stored_stages == stages_json:
-                task_id = tid
-                break
+            if task_id is None:
+                raise ValueError("Could not find matching task_id for the given task.")
 
-        if task_id is None:
-            raise ValueError("Could not find matching task_id for the given task.")
+            conn_connection.close()
+            conn_tasks.close()
+        else:
+            task_id = None
 
-        conn_connection.close()
-        conn_tasks.close()
-
-        first_branch_active_end = None
-        branch_offsets = [0] * len(task.stages)
+        branch_offsets = [0] * len(task.stages)  # Смещение для каждой ветки
+        branch_passive_starts = [[] for _ in task.stages]  # Начало и длительность пассивных фаз
         used_equipment = {}  # {equipment_name: [equipment_id, ...]}
+        sequential_after_branch1 = False  # Флаг для последовательного размещения ветки [2, 4, 5]
 
         for branch_idx, branch in enumerate(task.stages):
             for step_idx, step in enumerate(branch):
                 equipment_name = step["equipment"]
-
                 c.execute('''SELECT id FROM equipments WHERE name = ? AND lab_id = ? AND is_active = 1''',
                           (equipment_name, lab_id))
                 equipment_ids = [row[0] for row in c.fetchall()]
@@ -693,18 +700,46 @@ def reserve_task_equipment(user_id, task, lab_id, start_time, end_time):
                 processing_time = int(step["timing"][2].rstrip('a'))
                 step_duration = active_time + passive_time + processing_time
 
-
+                # Определяем время начала шага
                 if branch_idx == 0 and step_idx == 0:
                     step_start = start_time
-                    first_branch_active_end = start_time + timedelta(minutes=active_time)
-                elif step_idx == 0 and branch_idx > 0:
-                    step_start = first_branch_active_end if first_branch_active_end else start_time
-                else:
+                elif branch_idx == 0 and step_idx > 0:
                     step_start = start_time + timedelta(minutes=branch_offsets[branch_idx])
+                else:
+                    # Параллельная ветка [2, 4, 5]
+                    if sequential_after_branch1:
+                        # Последовательно после ветки [1, 3]
+                        step_start = start_time + timedelta(minutes=branch_offsets[branch_idx])
+                    else:
+                        step_start = None
+                        if step_idx == 0:  # Шаг 2
+                            for passive_start, passive_duration in branch_passive_starts[0]:
+                                if active_time <= passive_duration:
+                                    step_start = passive_start
+                                    break
+                            if step_start is None:
+                                step_start = start_time + timedelta(minutes=branch_offsets[0])
+                                sequential_after_branch1 = True
+                        else:  # Шаги 4, 5
+                            step_prev_end = start_time + timedelta(minutes=branch_offsets[branch_idx])
+                            step3_passive_start = None
+                            step3_passive_duration = 0
+                            for ps, pd in branch_passive_starts[0]:
+                                if ps <= step_prev_end < ps + timedelta(minutes=pd):
+                                    step3_passive_start = ps
+                                    step3_passive_duration = pd - ((step_prev_end - ps).total_seconds() / 60)
+                                    break
+                            if step3_passive_start and active_time <= step3_passive_duration:
+                                step_start = step_prev_end
+                            else:
+                                step_start = start_time + timedelta(minutes=branch_offsets[0])
+                                sequential_after_branch1 = True
 
-                step_end = step_start + timedelta(minutes=step_duration)
+                step_active_end = step_start + timedelta(minutes=active_time)
+                step_passive_end = step_active_end + timedelta(minutes=passive_time)
+                step_end = step_passive_end + timedelta(minutes=processing_time)
 
-
+                # Проверяем доступность оборудования
                 equipment_id = None
                 for eid in equipment_ids:
                     reservations = get_equipment_reservations(eid)
@@ -726,18 +761,24 @@ def reserve_task_equipment(user_id, task, lab_id, start_time, end_time):
                     used_equipment[equipment_name] = []
                 used_equipment[equipment_name].append(equipment_id)
 
-                c.execute('''INSERT INTO reserve (user_id, equipment_id, start_time, end_time, task_id)
-                             VALUES (?, ?, ?, ?, ?)''',
-                          (user_id, equipment_id, step_start.strftime("%Y-%m-%d %H:%M"),
-                           step_end.strftime("%Y-%m-%d %H:%M"), task_id))
+                if not dry_run:
+                    c.execute('''INSERT INTO reserve (user_id, equipment_id, start_time, end_time, task_id)
+                                 VALUES (?, ?, ?, ?, ?)''',
+                              (user_id, equipment_id, step_start.strftime("%Y-%m-%d %H:%M"),
+                               step_end.strftime("%Y-%m-%d %H:%M"), task_id))
 
                 branch_offsets[branch_idx] = (step_end - start_time).total_seconds() / 60
+                if passive_time > 0:
+                    branch_passive_starts[branch_idx].append((step_active_end, passive_time))
 
-        conn.commit()
-        return True
+        if not dry_run:
+            conn.commit()
+        total_duration = max(branch_offsets)
+        return total_duration if dry_run else True
     except Exception as e:
         print(f"Error in reserve_task_equipment: {e}")
-        conn.rollback()
+        if not dry_run:
+            conn.rollback()
         return False
     finally:
         conn.close()

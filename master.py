@@ -504,7 +504,7 @@ def check_reservations():
             reserved_steps = db.get_user_reservations(user_id)
             for step in reserved_steps:
                 time_to_start = (step["start_time"] - now).total_seconds() / 60
-                if 2 <= time_to_start <= 4:
+                if 3 <= time_to_start <= 4:
                     bot.send_message(user_id, f"Напоминание: Шаг '{step['step_name']}' ({step['equipment']}) начнётся через 3 минуты в {step['start_time'].strftime('%H:%M')}!")
         time.sleep(30)
 
