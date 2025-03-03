@@ -505,18 +505,70 @@ def my_tasks(query):
     if not reserved_steps:
         bot.send_message(query.from_user.id, "У вас нет забронированных шагов.")
     else:
-        response = "<b>Ваши забронированные шаги (в порядке выполнения):</b>\n\n"
-        now = datetime.now()
+        # Deduplicate steps
+        seen = set()
+        unique_steps = []
         for step in reserved_steps:
-            start_str = step["start_time"].strftime('%H:%M')
-            end_str = step["end_time"].strftime('%H:%M')
-            time_to_start = (step["start_time"] - now).total_seconds() / 60
-            time_str = f"{int(time_to_start)} мин до начала" if time_to_start > 0 else "уже началось"
-            response += f"{step['step_name']} ({step['equipment']}): {start_str} – {end_str} ({time_str})\n"
-        bot.send_message(query.from_user.id, response, parse_mode="HTML")
+            key = (step["start_time"], step["end_time"], step["equipment"])
+            if key not in seen:
+                seen.add(key)
+                unique_steps.append(step)
+        reserved_steps = unique_steps
+
+        tasks_dict = {}
+        for step in reserved_steps:
+            task_id = step["task_id"]
+            if task_id not in tasks_dict:
+                task = next((t for t in db.get_tasks_by_user_id(user_id) if t.task_id == task_id), None)
+                if task:
+                    tasks_dict[task_id] = {"name": task.name, "steps": []}
+            if task_id in tasks_dict:
+                tasks_dict[task_id]["steps"].append(step)
+        
+        if not tasks_dict:
+            bot.send_message(query.from_user.id, "У вас нет активных бронирований для задач.")
+        else:
+            now = datetime.now()
+            response = "<b>Ваши забронированные задачи (в порядке выполнения):</b>\n\n"
+            
+            for task_id, task_info in tasks_dict.items():
+                response += f"Задача {task_info['name']} (id{task_id}):\nШаги:\n"
+                for step in task_info["steps"]:
+                    start_str = step["start_time"].strftime('%H:%M')
+                    end_str = step["end_time"].strftime('%H:%M')
+                    time_to_start = (step["start_time"] - now).total_seconds() / 60
+                    time_to_end = (step["end_time"] - now).total_seconds() / 60
+                    if time_to_start > 0:
+                        time_str = f"{int(time_to_start)} мин до начала"
+                    elif time_to_end > 0:
+                        time_str = "уже началось"
+                    else:
+                        time_str = "закончилось"
+                    response += f"{step['step_name']} ({step['equipment']}): {start_str} – {end_str} ({time_str})\n"
+                response += "\n"
+            
+            buttons = {
+                f"Отменить задачу {task_info['name']} (id{task_id})": {"callback_data": f"cancel_task_{task_id}"}
+                for task_id, task_info in tasks_dict.items()
+            }
+            markup = telebot.util.quick_markup(buttons)
+            
+            bot.send_message(query.from_user.id, response.rstrip(), reply_markup=markup, parse_mode="HTML")
     
     bot.answer_callback_query(query.id)
 
+@bot.callback_query_handler(func=lambda query: query.data.startswith("cancel_task_"))
+def cancel_task(query):
+    user_id = str(query.from_user.id)
+    task_id = int(query.data.split("_")[2])
+    
+    if db.delete_reservations_by_task(user_id, task_id):
+        task = next((t for t in db.get_tasks_by_user_id(user_id) if t.task_id == task_id), None)
+        bot.send_message(query.from_user.id, f"Брони для задачи '{task.name}' (id{task_id}) успешно отменены.")
+    else:
+        bot.send_message(query.from_user.id, "Ошибка при отмене брони или задача не найдена.")
+    
+    bot.answer_callback_query(query.id)
 
 def check_reservations():
     """Проверяет время до начала шагов и отправляет уведомления за 3 минуты."""

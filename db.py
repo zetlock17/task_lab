@@ -784,7 +784,6 @@ def reserve_task_equipment(user_id, task, lab_id, start_time, end_time, dry_run=
         conn.close()
 
 def get_user_reservations(user_id):
-    """Возвращает список забронированных шагов пользователя в хронологическом порядке."""
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
     try:
@@ -804,8 +803,9 @@ def get_user_reservations(user_id):
             if not equipment:
                 continue
 
+            found = False
             for task in tasks:
-                if task_id in [t.task_id for t in get_tasks_by_user_id(user_id)]:
+                if task.task_id == task_id:  # Match by task_id directly
                     for branch in task.stages:
                         for step in branch:
                             if step["equipment"] == equipment["name"]:
@@ -816,10 +816,15 @@ def get_user_reservations(user_id):
                                         "step_name": step["name"],
                                         "equipment": step["equipment"],
                                         "start_time": start_dt,
-                                        "end_time": end_dt
+                                        "end_time": end_dt,
+                                        "task_id": task_id
                                     })
+                                    found = True
                                     break
-
+                        if found:
+                            break
+                    if found:
+                        break
         reserved_steps.sort(key=lambda x: x["start_time"])
         return reserved_steps
     except Exception as e:
@@ -827,6 +832,7 @@ def get_user_reservations(user_id):
         return []
     finally:
         conn.close()
+
 
 def get_all_users():
     conn = sqlite3.connect('database/users.db')
@@ -854,3 +860,30 @@ def get_equipment_summary_by_lab(lab_id):
         return {}
     finally:
         conn.close()
+
+
+def delete_reservations_by_task(user_id, task_id):
+    """Удаляет все брони для указанной задачи пользователя."""
+    conn = sqlite3.connect('database/labs.db')
+    c = conn.cursor()
+    try:
+
+        conn_connection = sqlite3.connect('database/connection.db')
+        c_connection = conn_connection.cursor()
+        c_connection.execute('''SELECT COUNT(*) FROM connection_user_to_task WHERE user_id = ? AND task_id = ?''',
+                             (user_id, task_id))
+        if c_connection.fetchone()[0] == 0:
+            return False
+        
+
+        c.execute('''DELETE FROM reserve WHERE user_id = ? AND task_id = ?''', (user_id, task_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Error in delete_reservations_by_task: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+        if 'conn_connection' in locals():
+            conn_connection.close()
