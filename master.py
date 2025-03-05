@@ -77,7 +77,7 @@ def lab_menu(query):
 def get_link_to_lab(query):
     lab_id = query.data.split('?')[1]
     bot.send_message(query.from_user.id, "Ссылка на присоединение к текущей лаборатории:\n"
-                                         f"<code>t.me/task_lab_bot?start=lab_{lab_id}_{query.from_user.id}</code>\n"
+                                         f"<code>t.me/tasks_lab_bot?start=lab_{lab_id}_{query.from_user.id}</code>\n"
                                          f"<i> (нажмите, чтобы скопировать) </i>")
 
 @bot.callback_query_handler(func=lambda query: query.data == "create_task")
