@@ -1,7 +1,7 @@
 from types import NoneType
 import telebot
 from datetime import datetime, tzinfo, timezone, timedelta
-
+import sqlite3
 from telebot.types import BotCommand
 
 import db
@@ -327,11 +327,71 @@ def task_list(query):
     if not tasks:
         bot.send_message(query.from_user.id, "У вас нет сохранённых задач.")
     else:
-        buttons = {f"{i+1}. {task.name}": {"callback_data": f"task_{i}"} for i, task in enumerate(tasks)}
+        buttons = {}
+        for i, task in enumerate(tasks):
+            buttons[f"{i+1}. {task.name}"] = {"callback_data": f"task_{i}"}
+            buttons[f"Поделиться '{task.name}'"] = {"callback_data": f"share_task_{task.task_id}"}
+        
         markup = telebot.util.quick_markup(buttons)
         bot.send_message(query.from_user.id, "Ваши задачи:", reply_markup=markup)
     
     bot.answer_callback_query(query.id)
+
+@bot.callback_query_handler(func=lambda query: query.data.startswith("share_task_"))
+def share_task(query):
+    user_id = str(query.from_user.id)
+    task_id = int(query.data.split("_")[2])
+    tasks = db.get_tasks_by_user_id(user_id)
+    task = next((t for t in tasks if t.task_id == task_id), None)
+    
+    if not task:
+        bot.send_message(query.from_user.id, "Задача не найдена.")
+        bot.answer_callback_query(query.id)
+        return
+    
+    bot.send_message(query.from_user.id, f"Ссылка для добавления задачи '{task.name}':\n"
+                                         f"<code>t.me/tasks_lab_bot?start=task_{task_id}_{user_id}</code>\n"
+                                         f"<i>(нажмите, чтобы скопировать)</i>")
+    bot.answer_callback_query(query.id)
+
+@bot.message_handler(commands=['start'], func=lambda message: True)
+def process_invite(message):
+    data = message.text[7:].split('_')
+    print(data)
+    user_id = str(message.from_user.id)
+    
+    if data[0] == 'lab':
+        lab_id = int(data[1])
+        creator_id = data[2]
+        if lab_id not in db.get_available_labs(creator_id):
+            bot.send_message(user_id, "К сожалению, ссылка на доступ к лаборатории недействительна.")
+        else:
+            status = db.create_connection_user_to_lab(user_id, lab_id)
+            if status:
+                bot.send_message(user_id, "Вы успешно добавлены в лабораторию!")
+            else:
+                bot.send_message(user_id, "Ошибка при добавлении в лабораторию.")
+    
+    elif data[0] == 'task':
+        task_id = int(data[1])
+        from_user_id = data[2]
+        tasks = db.get_tasks_by_user_id(from_user_id)
+        task = next((t for t in tasks if t.task_id == task_id), None)
+        
+        if not task:
+            bot.send_message(user_id, "К сожалению, ссылка на задачу недействительна.")
+        else:
+            template_id = db.add_template(task.name, task.description, task.stages)
+            status = db.assign_task_to_user(template_id, user_id)
+            if status:
+                bot.send_message(user_id, f"Задача '{task.name}' от пользователя {from_user_id} добавлена в ваш список задач!")
+                bot.send_message(from_user_id, f"Пользователь {user_id} добавил вашу задачу '{task.name}' через ссылку.")
+            else:
+                bot.send_message(user_id, "Ошибка при добавлении задачи.")
+    
+    else:
+        bot.send_message(user_id, "Неверный формат ссылки.")
+
 
 @bot.callback_query_handler(func=lambda query: query.data.startswith("task_"))
 def task_details(query):
@@ -353,10 +413,62 @@ def task_details(query):
         bot.answer_callback_query(query.id)
         return
     
-    available_slots = db.find_available_slots(task, lab_id)
+    # Показываем выбор дня (сегодня + 3 дня вперед)
+    now = datetime.now(tz=timezone(timedelta(hours=10))).replace(second=0, microsecond=0)
+    buttons = {}
+    for i in range(4):
+        day = now + timedelta(days=i)
+        day_str = day.strftime('%Y-%m-%d')
+        buttons[f"{day_str}"] = {
+            "callback_data": f"select_day_{task_index}_{day_str}"
+        }
+    markup = telebot.util.quick_markup(buttons)
+    bot.send_message(query.from_user.id, f"Задача: {task.name}\nВыберите день для бронирования:", reply_markup=markup)
+    bot.answer_callback_query(query.id)
     
+
+
+@bot.callback_query_handler(func=lambda query: query.data.startswith("select_day_"))
+def select_day(query):
+    user_id = str(query.from_user.id)
+    print(f"Select_day called for user {user_id}, query.data: {query.data}")  # Отладка
+    
+    parts = query.data.split("_")
+    print(f"Parts: {parts}")  # Отладка
+    
+    if len(parts) < 4:  # Проверяем, что есть хотя бы 4 части: select, day, task_index, YYYY-MM-DD
+        bot.send_message(user_id, "Ошибка в формате данных бронирования.")
+        bot.answer_callback_query(query.id)
+        return
+    
+    task_index = int(parts[2])
+    day_str = "-".join(parts[3:])  # Собираем дату обратно с дефисами
+    
+    print(f"Task index: {task_index}, Day: {day_str}")  # Отладка
+    
+    tasks = db.get_tasks_by_user_id(user_id=user_id)
+    if task_index < 0 or task_index >= len(tasks):
+        bot.send_message(query.from_user.id, "Задача не найдена.")
+        bot.answer_callback_query(query.id)
+        return
+    
+    task = tasks[task_index]
+    lab_id = db.user_get_selected_lab_id(user_id)
+    
+    try:
+        selected_date = datetime.strptime(day_str, "%Y-%m-%d")
+    except ValueError as e:
+        print(f"Error parsing date {day_str}: {e}")  # Отладка
+        bot.send_message(query.from_user.id, "Ошибка в формате даты.")
+        bot.answer_callback_query(query.id)
+        return
+    
+    print(f"Calling find_available_slots for date {selected_date}")  # Отладка
+    available_slots = db.find_available_slots(task, lab_id, selected_date)
+    
+    print(f"Available slots: {available_slots}")  # Отладка
     if not available_slots:
-        bot.send_message(query.from_user.id, "Нет доступных временных окон для этой задачи с 8:00 до 17:00.")
+        bot.send_message(query.from_user.id, f"Нет доступных временных окон для задачи на {day_str} с 8:00 до 17:00.")
         bot.answer_callback_query(query.id)
         return
     
@@ -366,8 +478,7 @@ def task_details(query):
         for slot in available_slots
     }
     markup = telebot.util.quick_markup(buttons)
-    
-    bot.send_message(query.from_user.id, f"Задача: {task.name}\nВыберите время для выполнения (доступно с 8:00 до 17:00):", reply_markup=markup)
+    bot.send_message(query.from_user.id, f"Задача: {task.name}\nВыберите время для выполнения на {day_str} (8:00–17:00):", reply_markup=markup)
     bot.answer_callback_query(query.id)
 
 @bot.callback_query_handler(func=lambda query: query.data.startswith("reserve_"))
@@ -402,7 +513,7 @@ def reserve_task(query):
     lab_id = db.user_get_selected_lab_id(user_id)
     
     if db.reserve_task_equipment(user_id, task, lab_id, start_time, end_time):
-        bot.send_message(query.from_user.id, f"Задача '{task.name}' успешно забронирована на {start_time.strftime('%H:%M')} - {end_time.strftime('%H:%M')}.")
+        bot.send_message(query.from_user.id, f"Задача '{task.name}' успешно забронирована на {start_time.strftime('%Y-%m-%d %H:%M')} - {end_time.strftime('%H:%M')}.")
     else:
         bot.send_message(query.from_user.id, "Ошибка при бронировании. Попробуйте другое время.")
     
@@ -419,6 +530,7 @@ def process_invite(message):
             bot.send_message(message.from_user.id, "К сожалению, ссылка на доступ к лаборатории недействительна.")
         else:
             status = db.create_connection_user_to_lab(str(message.from_user.id), int(data[1]))
+            bot.send_message(message.from_user.id, "Удачно добавлен")
 
 @bot.callback_query_handler(func=lambda query: query.data == "create_lab"
                             and db.user_is_admin(str(query.from_user.id)))
@@ -471,12 +583,21 @@ def add_equipment_to_lab(query):
     bot.answer_callback_query(query.id)
 
 @bot.message_handler(func=lambda message: type(message.reply_to_message) != NoneType
-                     and "введите список оборудования" in message.reply_to_message.text
+                     and "введите список оборудования в следующем формате" in message.reply_to_message.text
                      and 8127922870 == message.reply_to_message.from_user.id
-                     and db.user_is_admin(str(message.from_user.id))
-                     and db.is_user_admin_of_lab(str(message.from_user.id), int(message.reply_to_message.text[message.reply_to_message.text.rfind(".")+1:])))
+                     and db.user_is_admin(str(message.from_user.id)))
 def add_equipment_list(message):
-    lab_id = int(message.reply_to_message.text[message.reply_to_message.text.rfind(".")+1:])
+    user_id = str(message.from_user.id)
+    lab_id = db.user_get_selected_lab_id(user_id)
+    
+    if not lab_id:
+        bot.send_message(user_id, "Ошибка: Сначала выберите лабораторию.")
+        return
+    
+    if not db.is_user_admin_of_lab(user_id, lab_id):
+        bot.send_message(user_id, "У вас нет прав для добавления оборудования в эту лабораторию.")
+        return
+    
     lines = message.text.split('\n')
     errors = []
     for line in lines:
@@ -485,7 +606,10 @@ def add_equipment_list(message):
             continue
         try:
             count = int(line.split(' ')[1])
-        except:
+            if count <= 0:
+                errors.append(f"{line} (количество должно быть положительным)")
+                continue
+        except ValueError:
             errors.append(line)
             continue
         for i in range(count):
@@ -494,8 +618,8 @@ def add_equipment_list(message):
                 errors.append(line)
                 continue
     bot.send_message(message.from_user.id, f"Операция выполнена. Количество ошибок при выполнении: <b>{len(errors)}</b>:\n"
-                                           f"{'\n'.join(errors)}\n")
-
+                                           f"{'\n'.join(errors) if errors else 'Нет ошибок'}")
+    
 @bot.callback_query_handler(func=lambda query: query.data.startswith("equipment_list"))
 def equipment_list(query):
     user_id = str(query.from_user.id)
@@ -514,7 +638,11 @@ def equipment_list(query):
         response = f"Список оборудования в лаборатории [id{lab_id}] '{db.get_labname_by_id(lab_id)}':\n\n"
         for name, count in equipment_summary.items():
             response += f"{name}: {count}\n"
-        bot.send_message(query.from_user.id, response)
+        buttons = {
+            "Удалить оборудование": {"callback_data": f"remove_equipment?{lab_id}"}
+        }
+        markup = telebot.util.quick_markup(buttons)
+        bot.send_message(query.from_user.id, response, reply_markup=markup)
     
     bot.answer_callback_query(query.id)
 
@@ -554,7 +682,7 @@ def my_tasks(query):
         if not tasks_dict:
             bot.send_message(query.from_user.id, "У вас нет активных бронирований для задач.")
         else:
-            now = datetime.now(tz=tz)
+            now = datetime.now(tz=tz).replace(tzinfo=None)
             response = "<b>Ваши забронированные задачи (в порядке выполнения):</b>\n\n"
 
             for task_id, task_info in tasks_dict.items():
@@ -611,6 +739,45 @@ def check_reservations():
                 if 3 <= time_to_start <= 4:
                     bot.send_message(user_id, f"Напоминание: Шаг '{step['step_name']}' ({step['equipment']}) начнётся через 3 минуты в {step['start_time'].strftime('%H:%M')}!")
         time.sleep(59)
+
+@bot.callback_query_handler(func=lambda query: query.data.startswith("remove_equipment"))
+def remove_equipment(query):
+    user_id = str(query.from_user.id)
+    lab_id = int(query.data.split('?')[1])
+    
+    if not db.is_user_admin_of_lab(user_id, lab_id):
+        bot.send_message(query.from_user.id, "У вас нет прав для удаления оборудования из этой лаборатории.")
+        bot.answer_callback_query(query.id)
+        return
+    
+    bot.send_message(query.from_user.id, f"Пожалуйста, <b>ответом</b> введите список оборудования для удаления из лаборатории [id{lab_id}] в формате: [<i>название кол-во</i>], пример:\n\n"
+                                         f"Микроскоп 2\nЦентрифуга 1\n...")
+    bot.answer_callback_query(query.id)
+
+
+
+@bot.message_handler(func=lambda message: type(message.reply_to_message) != NoneType
+                     and "введите список оборудования для удаления" in message.reply_to_message.text
+                     and 8127922870 == message.reply_to_message.from_user.id
+                     and db.user_is_admin(str(message.from_user.id)))
+def remove_equipment_list(message):
+    user_id = str(message.from_user.id)
+    lab_id = db.user_get_selected_lab_id(user_id)
+    
+    if not lab_id:
+        bot.send_message(user_id, "Ошибка: Сначала выберите лабораторию.")
+        return
+    
+    if not db.is_user_admin_of_lab(user_id, lab_id):
+        bot.send_message(user_id, "У вас нет прав для удаления оборудования из этой лаборатории.")
+        return
+
+    lines = message.text.split('\n')
+    errors = db.remove_equipments(lab_id, lines)
+    
+    bot.send_message(message.from_user.id, f"Операция выполнена. Количество ошибок: <b>{len(errors)}</b>:\n"
+                                          f"{'\n'.join(errors) if errors else 'Нет ошибок'}")
+
 
 tz = timezone(timedelta(hours=10))
 

@@ -552,21 +552,25 @@ def get_task_duration(task):
     return max(branch_durations) if branch_durations else 0
 
 
-def find_available_slots(task, lab_id, start_date=None):
-    """Ищет доступные временные окна с использованием reserve_task_equipment для длительности."""
-    if start_date is None:
-        start_date = datetime.now(tz = timezone(timedelta(hours=10))).replace(second=0, microsecond=0)
-    
-    day_start = start_date.replace(hour=8, minute=0, second=0, microsecond=0)
-    day_end = start_date.replace(hour=17, minute=0, second=0, microsecond=0)
+def find_available_slots(task, lab_id, selected_date=None):
+    """Ищет доступные временные окна для задачи на указанную дату."""
+    if selected_date is None:
+        selected_date = datetime.now(tz=timezone(timedelta(hours=10))).replace(second=0, microsecond=0)
+    else:
+        selected_date = selected_date.replace(hour=8, minute=0, second=0, microsecond=0)
 
-    # Моделируем задачу для получения реальной длительности
+    day_start = selected_date.replace(hour=8, minute=0)
+    day_end = selected_date.replace(hour=17, minute=0)
+
+    print(f"find_available_slots: Date {selected_date}, Day start {day_start}, Day end {day_end}")  # Отладка
+    
     total_duration = reserve_task_equipment(None, task, lab_id, datetime(2023, 1, 1, 0, 0), None, dry_run=True)
+    print(f"Total duration: {total_duration}")  # Отладка
     if not total_duration or total_duration <= 0:
+        print("No valid duration found")  # Отладка
         return []
 
-    # Собираем информацию о шагах и оборудовании (только для проверки доступности)
-    equipment_usage = {}  # {equipment_name: [(start_offset, duration), ...]}
+    equipment_usage = {}
     for branch_idx, branch in enumerate(task.stages):
         branch_offset = 0
         if branch_idx > 0:
@@ -580,16 +584,19 @@ def find_available_slots(task, lab_id, start_date=None):
             equipment_usage[equipment_name].append((branch_offset, step_duration))
             branch_offset += step_duration
 
-    # Получаем все экземпляры оборудования для лаборатории
+    print(f"Equipment usage: {equipment_usage}")  # Отладка
+
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
-    equipment_instances = {}  # {equipment_name: [id1, id2, ...]}
+    equipment_instances = {}
     c.execute('''SELECT id, name FROM equipments WHERE lab_id = ? AND is_active = 1''', (lab_id,))
     for equip_id, equip_name in c.fetchall():
         if equip_name not in equipment_instances:
             equipment_instances[equip_name] = []
         equipment_instances[equip_name].append(equip_id)
     conn.close()
+
+    print(f"Equipment instances: {equipment_instances}")  # Отладка
 
     available_slots = []
     current_time = day_start
@@ -601,6 +608,7 @@ def find_available_slots(task, lab_id, start_date=None):
         for equipment_name, usages in equipment_usage.items():
             if equipment_name not in equipment_instances:
                 is_slot_available = False
+                print(f"Equipment {equipment_name} not found in lab")  # Отладка
                 break
             available_equip_ids = equipment_instances[equipment_name].copy()
             used_equip_ids = set()
@@ -626,12 +634,14 @@ def find_available_slots(task, lab_id, start_date=None):
                             break
                 if not assigned:
                     is_slot_available = False
+                    print(f"No available equipment for {equipment_name} at {step_start} - {step_end}")  # Отладка
                     break
             if not is_slot_available:
                 break
 
         if is_slot_available:
             available_slots.append((current_time, slot_end))
+            print(f"Slot found: {current_time} - {slot_end}")  # Отладка
             if len(available_slots) == 1:
                 minutes = current_time.minute
                 if minutes < 30:
@@ -648,18 +658,19 @@ def find_available_slots(task, lab_id, start_date=None):
     return available_slots
 
 
+  
+
 def reserve_task_equipment(user_id, task, lab_id, start_time, end_time, dry_run=False):
-    """Бронирует оборудование или моделирует размещение шагов с учётом последовательности ветки."""
+    """Бронирует оборудование, находя минимальное время выполнения с учетом параллельных веток и фаз."""
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
     try:
-        # Получаем task_id (только если не dry_run)
+        # Получаем task_id
         if not dry_run:
             conn_connection = sqlite3.connect('database/connection.db')
             c_connection = conn_connection.cursor()
             conn_tasks = sqlite3.connect('database/tasks.db')
             c_tasks = conn_tasks.cursor()
-
             c_connection.execute('''SELECT task_id FROM connection_user_to_task WHERE user_id = ?''', (user_id,))
             task_ids = [row[0] for row in c_connection.fetchall()]
             task_id = None
@@ -672,109 +683,146 @@ def reserve_task_equipment(user_id, task, lab_id, start_time, end_time, dry_run=
                 if stored_stages == stages_json:
                     task_id = tid
                     break
-
             if task_id is None:
-                raise ValueError("Could not find matching task_id for the given task.")
-
+                raise ValueError("Could not find matching task_id.")
             conn_connection.close()
             conn_tasks.close()
         else:
             task_id = None
 
-        branch_offsets = [0] * len(task.stages)  # Смещение для каждой ветки
-        branch_passive_starts = [[] for _ in task.stages]  # Начало и длительность пассивных фаз
-        used_equipment = {}  # {equipment_name: [equipment_id, ...]}
-        sequential_after_branch1 = False  # Флаг для последовательного размещения ветки [2, 4, 5]
+        # Доступное оборудование
+        c.execute('''SELECT id, name FROM equipments WHERE lab_id = ? AND is_active = 1''', (lab_id,))
+        equipment_instances = {}
+        for equip_id, equip_name in c.fetchall():
+            if equip_name not in equipment_instances:
+                equipment_instances[equip_name] = []
+            equipment_instances[equip_name].append(equip_id)
 
-        for branch_idx, branch in enumerate(task.stages):
-            for step_idx, step in enumerate(branch):
-                equipment_name = step["equipment"]
-                c.execute('''SELECT id FROM equipments WHERE name = ? AND lab_id = ? AND is_active = 1''',
-                          (equipment_name, lab_id))
-                equipment_ids = [row[0] for row in c.fetchall()]
-                if not equipment_ids:
-                    raise ValueError(f"No equipment '{equipment_name}' found in lab {lab_id}")
+        # Проверка доступности оборудования
+        def is_equipment_available(equip_id, step_start, step_end):
+            reservations = get_equipment_reservations(equip_id)
+            for res_start, res_end in reservations:
+                res_start_dt = datetime.strptime(res_start, "%Y-%m-%d %H:%M")
+                res_end_dt = datetime.strptime(res_end, "%Y-%m-%d %H:%M")
+                if step_start < res_end_dt and step_end > res_start_dt:
+                    return False
+            return True
 
+        # Структура шага: [(branch_idx, step_idx, start_time, end_time, active_start1, active_end1, active_start2, active_end2, equip_id)]
+        best_schedule = None
+        min_duration = float('inf')
+
+        # Функция для вычисления длительности ветки
+        def get_branch_duration(branch):
+            return sum(int(t.rstrip('ap')) for step in branch for t in step["timing"])
+
+        # Перебор смещений второй ветки относительно первой
+        branch1_duration = get_branch_duration(task.stages[0])
+        branch2_duration = get_branch_duration(task.stages[1]) if len(task.stages) > 1 else 0
+        max_shift = branch1_duration + branch2_duration  # Максимальный диапазон для поиска
+
+        for shift in range(0, max_shift + 1, 1):  # Шаг 1 минута
+            schedule = []
+            equipment_used = {}  # {equip_id: [(start, end), ...]}
+            active_times = []    # [(start, end), ...] для проверки пересечений
+
+            # Размещаем первую ветку с начала
+            offset = 0
+            for step_idx, step in enumerate(task.stages[0]):
                 active_time = int(step["timing"][0].rstrip('a'))
                 passive_time = int(step["timing"][1].rstrip('p'))
                 processing_time = int(step["timing"][2].rstrip('a'))
-                step_duration = active_time + passive_time + processing_time
+                step_start = start_time + timedelta(minutes=offset)
+                active_end1 = step_start + timedelta(minutes=active_time)
+                passive_end = active_end1 + timedelta(minutes=passive_time)
+                step_end = passive_end + timedelta(minutes=processing_time)
 
-                # Определяем время начала шага
-                if branch_idx == 0 and step_idx == 0:
-                    step_start = start_time
-                elif branch_idx == 0 and step_idx > 0:
-                    step_start = start_time + timedelta(minutes=branch_offsets[branch_idx])
-                else:
-                    # Параллельная ветка [2, 4, 5]
-                    if sequential_after_branch1:
-                        # Последовательно после ветки [1, 3]
-                        step_start = start_time + timedelta(minutes=branch_offsets[branch_idx])
-                    else:
-                        step_start = None
-                        if step_idx == 0:  # Шаг 2
-                            for passive_start, passive_duration in branch_passive_starts[0]:
-                                if active_time <= passive_duration:
-                                    step_start = passive_start
-                                    break
-                            if step_start is None:
-                                step_start = start_time + timedelta(minutes=branch_offsets[0])
-                                sequential_after_branch1 = True
-                        else:  # Шаги 4, 5
-                            step_prev_end = start_time + timedelta(minutes=branch_offsets[branch_idx])
-                            step3_passive_start = None
-                            step3_passive_duration = 0
-                            for ps, pd in branch_passive_starts[0]:
-                                if ps <= step_prev_end < ps + timedelta(minutes=pd):
-                                    step3_passive_start = ps
-                                    step3_passive_duration = pd - ((step_prev_end - ps).total_seconds() / 60)
-                                    break
-                            if step3_passive_start and active_time <= step3_passive_duration:
-                                step_start = step_prev_end
-                            else:
-                                step_start = start_time + timedelta(minutes=branch_offsets[0])
-                                sequential_after_branch1 = True
-
-                step_active_end = step_start + timedelta(minutes=active_time)
-                step_passive_end = step_active_end + timedelta(minutes=passive_time)
-                step_end = step_passive_end + timedelta(minutes=processing_time)
-
-                # Проверяем доступность оборудования
-                equipment_id = None
-                for eid in equipment_ids:
-                    reservations = get_equipment_reservations(eid)
-                    is_free = True
-                    for res_start, res_end in reservations:
-                        res_start_dt = datetime.strptime(res_start, "%Y-%m-%d %H:%M")
-                        res_end_dt = datetime.strptime(res_end, "%Y-%m-%d %H:%M")
-                        if step_start < res_end_dt and step_end > res_start_dt:
-                            is_free = False
-                            break
-                    if is_free:
-                        equipment_id = eid
+                equip_id = None
+                for eid in equipment_instances.get(step["equipment"], []):
+                    if is_equipment_available(eid, step_start, step_end):
+                        equip_id = eid
                         break
-                
-                if equipment_id is None:
-                    raise ValueError(f"No available '{equipment_name}' for time {step_start} - {step_end}")
+                if equip_id is None:
+                    break  # Пропускаем этот вариант, если оборудование занято
 
-                if equipment_name not in used_equipment:
-                    used_equipment[equipment_name] = []
-                used_equipment[equipment_name].append(equipment_id)
+                schedule.append((0, step_idx, step_start, step_end, step_start, active_end1, passive_end, step_end, equip_id))
+                active_times.append((step_start, active_end1))
+                active_times.append((passive_end, step_end))
+                equipment_used[equip_id] = equipment_used.get(equip_id, []) + [(step_start, step_end)]
+                offset += active_time + passive_time + processing_time
 
-                if not dry_run:
-                    c.execute('''INSERT INTO reserve (user_id, equipment_id, start_time, end_time, task_id)
-                                 VALUES (?, ?, ?, ?, ?)''',
-                              (user_id, equipment_id, step_start.strftime("%Y-%m-%d %H:%M"),
-                               step_end.strftime("%Y-%m-%d %H:%M"), task_id))
+            if len(schedule) != len(task.stages[0]):
+                continue  # Первая ветка не размещена полностью
 
-                branch_offsets[branch_idx] = (step_end - start_time).total_seconds() / 60
-                if passive_time > 0:
-                    branch_passive_starts[branch_idx].append((step_active_end, passive_time))
+            # Размещаем вторую ветку со смещением
+            offset = shift
+            branch2_placed = True
+            for step_idx, step in enumerate(task.stages[1]):
+                active_time = int(step["timing"][0].rstrip('a'))
+                passive_time = int(step["timing"][1].rstrip('p'))
+                processing_time = int(step["timing"][2].rstrip('a'))
+                step_start = start_time + timedelta(minutes=offset)
+                active_end1 = step_start + timedelta(minutes=active_time)
+                passive_end = active_end1 + timedelta(minutes=passive_time)
+                step_end = passive_end + timedelta(minutes=processing_time)
 
+                equip_id = None
+                for eid in equipment_instances.get(step["equipment"], []):
+                    if eid in equipment_used:
+                        for res_start, res_end in equipment_used[eid]:
+                            if step_start < res_end and step_end > res_start:
+                                break
+                        else:
+                            if is_equipment_available(eid, step_start, step_end):
+                                equip_id = eid
+                                break
+                    elif is_equipment_available(eid, step_start, step_end):
+                        equip_id = eid
+                        break
+                if equip_id is None:
+                    branch2_placed = False
+                    break
+
+                schedule.append((1, step_idx, step_start, step_end, step_start, active_end1, passive_end, step_end, equip_id))
+                active_times.append((step_start, active_end1))
+                active_times.append((passive_end, step_end))
+                equipment_used[equip_id] = equipment_used.get(equip_id, []) + [(step_start, step_end)]
+                offset += active_time + passive_time + processing_time
+
+            if not branch2_placed or len(schedule) != len(task.stages[0]) + len(task.stages[1]):
+                continue
+
+            # Проверка пересечения активных фаз
+            active_times.sort()
+            overlap = False
+            for i in range(1, len(active_times)):
+                if active_times[i][0] < active_times[i-1][1]:
+                    overlap = True
+                    break
+            if overlap:
+                continue
+
+            # Вычисляем длительность
+            end_time = max(s[3] for s in schedule)
+            duration = (end_time - start_time).total_seconds() / 60
+            if duration < min_duration:
+                min_duration = duration
+                best_schedule = schedule
+
+        if best_schedule is None:
+            raise ValueError("No valid schedule found.")
+
+        # Выполняем бронирование
         if not dry_run:
+            for _, _, step_start, step_end, _, _, _, _, equip_id in best_schedule:
+                c.execute('''INSERT INTO reserve (user_id, equipment_id, start_time, end_time, task_id)
+                             VALUES (?, ?, ?, ?, ?)''',
+                          (user_id, equip_id, step_start.strftime("%Y-%m-%d %H:%M"),
+                           step_end.strftime("%Y-%m-%d %H:%M"), task_id))
             conn.commit()
-        total_duration = max(branch_offsets)
-        return total_duration if dry_run else True
+
+        return min_duration if dry_run else True
+
     except Exception as e:
         print(f"Error in reserve_task_equipment: {e}")
         if not dry_run:
@@ -906,3 +954,81 @@ def delete_reservations_by_task(user_id, task_id):
         conn.close()
         if 'conn_connection' in locals():
             conn_connection.close()
+
+def remove_equipments(lab_id: int, equipment_list: list) -> list:
+    """Удаляет указанное количество оборудования из лаборатории. Возвращает список ошибок."""
+    conn = sqlite3.connect('database/labs.db')
+    c = conn.cursor()
+    errors = []
+    
+    try:
+        for line in equipment_list:
+            if len(line.split(' ')) != 2:
+                errors.append(line)
+                continue
+            name, count_str = line.split(' ')
+            try:
+                count_to_remove = int(count_str)
+                if count_to_remove <= 0:
+                    errors.append(f"{line} (количество должно быть положительным)")
+                    continue
+            except ValueError:
+                errors.append(line)
+                continue
+            
+            # Получаем текущее количество оборудования
+            c.execute('''SELECT id FROM equipments WHERE name = ? AND lab_id = ? AND is_active = 1''', 
+                      (name, lab_id))
+            equip_ids = [row[0] for row in c.fetchall()]
+            current_count = len(equip_ids)
+            
+            if current_count < count_to_remove:
+                errors.append(f"{name}: запрошено удалить {count_to_remove}, но доступно только {current_count}")
+                continue
+            
+            # Удаляем указанное количество
+            for i in range(count_to_remove):
+                equip_id = equip_ids[i]
+                c.execute('DELETE FROM reserve WHERE equipment_id = ?', (equip_id,))
+                c.execute('DELETE FROM equipments WHERE id = ?', (equip_id,))
+        
+        conn.commit()
+    except Exception as e:
+        print(f"Error in remove_equipments: {e}")
+        conn.rollback()
+        errors.append("Произошла ошибка при удалении оборудования")
+    finally:
+        conn.close()
+    
+    return errors
+
+
+def share_template(template_id: int, from_user_id: str, to_user_id: str) -> bool:
+    """Передает шаблон задачи от одного пользователя другому."""
+    conn_tasks = sqlite3.connect('database/tasks.db')
+    c_tasks = conn_tasks.cursor()
+    conn_connection = sqlite3.connect('database/connection.db')
+    c_connection = conn_connection.cursor()
+    try:
+        # Проверяем, существует ли шаблон
+        c_tasks.execute('''SELECT COUNT(*) FROM templates WHERE id = ?''', (template_id,))
+        if c_tasks.fetchone()[0] == 0:
+            return False
+        
+        # Создаем новую задачу на основе шаблона
+        c_tasks.execute('''INSERT INTO tasks (templates_id) VALUES (?)''', (template_id,))
+        new_task_id = c_tasks.lastrowid
+        
+        # Привязываем задачу к получателю
+        c_connection.execute('''INSERT INTO connection_user_to_task (user_id, task_id) VALUES (?, ?)''',
+                             (to_user_id, new_task_id))
+        
+        conn_tasks.commit()
+        conn_connection.commit()
+        return True
+    except Exception as e:
+        print(f"Error in share_template: {e}")
+        return False
+    finally:
+        conn_tasks.close()
+        conn_connection.close()
