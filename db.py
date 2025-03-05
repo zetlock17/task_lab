@@ -1,7 +1,7 @@
 import os
 import sqlite3
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 class Task:
     def __init__(self, name: str, description: str, stages: list):
@@ -555,7 +555,7 @@ def get_task_duration(task):
 def find_available_slots(task, lab_id, start_date=None):
     """Ищет доступные временные окна с использованием reserve_task_equipment для длительности."""
     if start_date is None:
-        start_date = datetime.now().replace(second=0, microsecond=0)
+        start_date = datetime.now(tz = timezone(timedelta(hours=10))).replace(second=0, microsecond=0)
     
     day_start = start_date.replace(hour=8, minute=0, second=0, microsecond=0)
     day_end = start_date.replace(hour=17, minute=0, second=0, microsecond=0)
@@ -783,6 +783,7 @@ def reserve_task_equipment(user_id, task, lab_id, start_time, end_time, dry_run=
     finally:
         conn.close()
 
+
 def get_user_reservations(user_id):
     conn = sqlite3.connect('database/labs.db')
     c = conn.cursor()
@@ -794,37 +795,55 @@ def get_user_reservations(user_id):
         reservations = c.fetchall()
 
         tasks = get_tasks_by_user_id(user_id)
+        # Создаем словарь задач для быстрого поиска по task_id
+        task_dict = {str(task.task_id): task for task in tasks}
         reserved_steps = []
 
         for res_id, start_time, end_time, equipment_id, task_id in reservations:
-            start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M")
-            end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M")
+            try:
+                start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M")
+                end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M")
+            except ValueError as e:
+                print(f"Invalid datetime format: {e}")
+                continue
+
             equipment = get_equipment_by_id(equipment_id)
             if not equipment:
                 continue
 
-            found = False
-            for task in tasks:
-                if task.task_id == task_id:  # Match by task_id directly
-                    for branch in task.stages:
-                        for step in branch:
-                            if step["equipment"] == equipment["name"]:
-                                step_duration = sum(int(t.rstrip('ap')) for t in step["timing"])
-                                if abs((end_dt - start_dt).total_seconds() / 60 - step_duration) < 1:
-                                    reserved_steps.append({
-                                        "task_name": task.name,
-                                        "step_name": step["name"],
-                                        "equipment": step["equipment"],
-                                        "start_time": start_dt,
-                                        "end_time": end_dt,
-                                        "task_id": task_id
-                                    })
-                                    found = True
-                                    break
-                        if found:
-                            break
-                    if found:
-                        break
+            # Приводим task_id из резервации к строке для совместимости
+            task = task_dict.get(str(task_id))
+            if not task:
+                continue
+
+            # Поиск соответствующего шага в задаче
+            for branch in task.stages:
+                for step in branch:
+                    if step["equipment"] != equipment["name"]:
+                        continue
+
+                    # Расчет длительности шага
+                    try:
+                        step_duration = sum(int(t.rstrip('ap').rstrip('m')) for t in step["timing"])
+                    except ValueError as e:
+                        print(f"Invalid timing format: {e}")
+                        continue
+
+                    reservation_duration = (end_dt - start_dt).total_seconds() / 60
+                    if abs(reservation_duration - step_duration) < 1:
+                        reserved_steps.append({
+                            "task_name": task.name,
+                            "step_name": step["name"],
+                            "equipment": step["equipment"],
+                            "start_time": start_dt,
+                            "end_time": end_dt,
+                            "task_id": task.task_id
+                        })
+                        break  # Прерываем после первого совпадения в ветке
+                else:
+                    continue  # Переходим к следующей ветке, если не нашли в текущей
+                break  # Прерываем поиск по веткам после нахождения совпадения
+
         reserved_steps.sort(key=lambda x: x["start_time"])
         return reserved_steps
     except Exception as e:

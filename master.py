@@ -1,6 +1,9 @@
 from types import NoneType
 import telebot
-from datetime import datetime
+from datetime import datetime, tzinfo, timezone, timedelta
+
+from telebot.types import BotCommand
+
 import db
 import os
 from dotenv import load_dotenv
@@ -84,7 +87,7 @@ def lab_menu(query):
 def get_link_to_lab(query):
     lab_id = query.data.split('?')[1]
     bot.send_message(query.from_user.id, "Ссылка на присоединение к текущей лаборатории:\n"
-                                         f"<code>t.me/task_lab_bot?start=lab_{lab_id}_{query.from_user.id}</code>\n"
+                                         f"<code>t.me/tasks_lab_bot?start=lab_{lab_id}_{query.from_user.id}</code>\n"
                                          f"<i> (нажмите, чтобы скопировать) </i>")
 
 @bot.callback_query_handler(func=lambda query: query.data == "create_task")
@@ -520,36 +523,40 @@ def my_tasks(query):
     user_id = str(query.from_user.id)
     lab_id = int(query.data.split('?')[1])
     reserved_steps = db.get_user_reservations(user_id)
-    
+
     if not reserved_steps:
         bot.send_message(query.from_user.id, "У вас нет забронированных шагов.")
     else:
-        # Deduplicate steps (оставлено как в оригинале)
-        seen = set()
-        unique_steps = []
+        # Группируем шаги по времени и оборудованию
+        time_equipment_groups = {}
         for step in reserved_steps:
             key = (step["start_time"], step["end_time"], step["equipment"])
-            if key not in seen:
-                seen.add(key)
-                unique_steps.append(step)
-        reserved_steps = unique_steps
+            if key not in time_equipment_groups:
+                time_equipment_groups[key] = []
+            time_equipment_groups[key].append(step)
 
+        # Группируем шаги по task_id
         tasks_dict = {}
-        for step in reserved_steps:
+        for key, steps in time_equipment_groups.items():
+            # Берем первый шаг из группы (остальные дублируются)
+            step = steps[0]
             task_id = step["task_id"]
             if task_id not in tasks_dict:
                 task = next((t for t in db.get_tasks_by_user_id(user_id) if t.task_id == task_id), None)
                 if task:
                     tasks_dict[task_id] = {"name": task.name, "steps": []}
             if task_id in tasks_dict:
-                tasks_dict[task_id]["steps"].append(step)
-        
+                # Добавляем шаг с информацией о количестве повторений
+                step_with_count = step.copy()
+                step_with_count["repeat_count"] = len(steps)
+                tasks_dict[task_id]["steps"].append(step_with_count)
+
         if not tasks_dict:
             bot.send_message(query.from_user.id, "У вас нет активных бронирований для задач.")
         else:
-            now = datetime.now()
+            now = datetime.now(tz=tz)
             response = "<b>Ваши забронированные задачи (в порядке выполнения):</b>\n\n"
-            
+
             for task_id, task_info in tasks_dict.items():
                 response += f"Задача {task_info['name']} (id{task_id}):\nШаги:\n"
                 for step in task_info["steps"]:
@@ -563,17 +570,21 @@ def my_tasks(query):
                         time_str = "уже началось"
                     else:
                         time_str = "закончилось"
-                    response += f"{step['step_name']} ({step['equipment']}): {start_str} – {end_str} ({time_str})\n"
+
+                    # Добавляем информацию о количестве повторений
+                    repeat_info = f" ({step['repeat_count']}x)" if step['repeat_count'] > 1 else ""
+                    response += f"{step['step_name']} ({step['equipment']}): {start_str} – {end_str} ({time_str}){repeat_info}\n"
                 response += "\n"
-            
+
+            # Создаем кнопки для отмены задач
             buttons = {
                 f"Отменить задачу {task_info['name']} (id{task_id})": {"callback_data": f"cancel_task_{task_id}"}
                 for task_id, task_info in tasks_dict.items()
             }
             markup = telebot.util.quick_markup(buttons)
-            
+
             bot.send_message(query.from_user.id, response.rstrip(), reply_markup=markup, parse_mode="HTML")
-    
+
     bot.answer_callback_query(query.id)
 
 @bot.callback_query_handler(func=lambda query: query.data.startswith("cancel_task_"))
@@ -592,19 +603,22 @@ def cancel_task(query):
 def check_reservations():
     """Проверяет время до начала шагов и отправляет уведомления за 3 минуты."""
     while True:
-        now = datetime.now()
+        now = datetime.now(tz=tz).replace(tzinfo=None)
         for user_id in db.get_all_users():
             reserved_steps = db.get_user_reservations(user_id)
             for step in reserved_steps:
                 time_to_start = (step["start_time"] - now).total_seconds() / 60
                 if 3 <= time_to_start <= 4:
                     bot.send_message(user_id, f"Напоминание: Шаг '{step['step_name']}' ({step['equipment']}) начнётся через 3 минуты в {step['start_time'].strftime('%H:%M')}!")
-        time.sleep(30)
+        time.sleep(59)
+
+tz = timezone(timedelta(hours=10))
 
 notification_thread = threading.Thread(target=check_reservations, daemon=True)
 notification_thread.start()
 
 db.init_db()
-db.user_set_admin("877702484", True)
+db.user_set_admin("1007994831", True)
+bot.set_my_commands([BotCommand('main_menu', "Показать доступные вам лаборатории")])
 print('Bot initialized')
 bot.infinity_polling()
