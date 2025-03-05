@@ -584,7 +584,7 @@ def cancel_task(query):
 def check_reservations():
     """Проверяет время до начала шагов и отправляет уведомления за 3 минуты."""
     while True:
-        now = datetime.now(tz=tz)
+        now = datetime.now(tz=tz).replace(tzinfo=None)
         for user_id in db.get_all_users():
             reserved_steps = db.get_user_reservations(user_id)
             for step in reserved_steps:

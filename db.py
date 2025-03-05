@@ -1,7 +1,7 @@
 import os
 import sqlite3
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 class Task:
     def __init__(self, name: str, description: str, stages: list):
@@ -555,7 +555,7 @@ def get_task_duration(task):
 def find_available_slots(task, lab_id, start_date=None):
     """Ищет доступные временные окна с использованием reserve_task_equipment для длительности."""
     if start_date is None:
-        start_date = datetime.now().replace(second=0, microsecond=0)
+        start_date = datetime.now(tz = timezone(timedelta(hours=10))).replace(second=0, microsecond=0)
     
     day_start = start_date.replace(hour=8, minute=0, second=0, microsecond=0)
     day_end = start_date.replace(hour=17, minute=0, second=0, microsecond=0)
