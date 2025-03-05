@@ -786,6 +786,7 @@ notification_thread.start()
 
 db.init_db()
 db.user_set_admin("1007994831", True)
+db.user_set_admin("877702484", True)
 bot.set_my_commands([BotCommand('main_menu', "Показать доступные вам лаборатории")])
 print('Bot initialized')
 bot.infinity_polling()
