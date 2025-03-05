@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 import threading
 import time
 
-
 load_dotenv()
 
 token = os.environ.get('TELEGRAM_BOT_TOKEN')
@@ -18,8 +17,19 @@ if not token:
 
 bot = telebot.TeleBot(token, parse_mode="HTML")
 
+# Глобальные словари для временного хранения
 user_tasks = {}  # {user_id: Task}
 user_steps = {}  # {user_id: [{"name": str, "equipment": str, "timing": list}, ...]}
+# Словарь блокировок для каждого пользователя
+user_locks = {}
+lock_for_locks = threading.Lock()  # Блокировка для создания новых блокировок в user_locks
+
+def get_user_lock(user_id):
+    """Получает или создаёт блокировку для конкретного пользователя."""
+    with lock_for_locks:  # Синхронизация доступа к user_locks
+        if user_id not in user_locks:
+            user_locks[user_id] = threading.Lock()
+        return user_locks[user_id]
 
 def isFirstMessage(message):
     return not db.is_user_registered(str(message.from_user.id))
@@ -80,7 +90,8 @@ def get_link_to_lab(query):
 @bot.callback_query_handler(func=lambda query: query.data == "create_task")
 def create_task(query):
     user_id = str(query.from_user.id)
-    user_tasks[user_id] = None
+    with get_user_lock(user_id):
+        user_tasks[user_id] = None
     bot.send_message(query.from_user.id, "Пожалуйста, введите название и описание <b>ответом</b> на сообщение в следующем формате:\nНазвание...\nОписание...")
     bot.answer_callback_query(query.id)
 
@@ -113,16 +124,17 @@ def apply_task_name_and_description(message):
         msg()
         return
     
-    user_tasks[user_id] = db.Task(title, description, [])
+    with get_user_lock(user_id):
+        user_tasks[user_id] = db.Task(title, description, [])
     markup = telebot.util.quick_markup({"Добавить шаги": {"callback_data": "хз"}})
     bot.send_message(message.from_user.id, f"Название и описание сохранены в задачу '{title}'. Теперь введите шаги.", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda query: query.data == "хз")
 def add_step(query):
     user_id = str(query.from_user.id)
-    if user_id not in user_steps:
-        user_steps[user_id] = []
-    
+    with get_user_lock(user_id):
+        if user_id not in user_steps:
+            user_steps[user_id] = []
     bot.send_message(query.from_user.id, 
                      "Введите данные для шага в формате:\n"
                      "Название\n"
@@ -210,7 +222,8 @@ def apply_step_data(message):
 
     timing = [f"{active_time}a", f"{passive_time}p", f"{processing_time}a"]
     step = {"name": name, "equipment": equipment, "timing": timing}
-    user_steps[user_id].append(step)
+    with get_user_lock(user_id):
+        user_steps[user_id].append(step)
     
     markup = telebot.util.quick_markup({
         "Добавить ещё шаг": {"callback_data": "add_another_step"},
@@ -234,12 +247,13 @@ def add_another_step(query):
 @bot.callback_query_handler(func=lambda query: query.data == "finish_steps")
 def finish_steps(query):
     user_id = str(query.from_user.id)
-    if not user_steps.get(user_id):
-        bot.send_message(user_id, "Вы не добавили ни одного шага.")
-        return
-    
-    steps_list = "\n".join(f"{i+1}. {step['name']} (Прибор: {step['equipment']}, Время: {step['timing']})" 
-                           for i, step in enumerate(user_steps[user_id]))
+    with get_user_lock(user_id):
+        if not user_steps.get(user_id):
+            bot.send_message(user_id, "Вы не добавили ни одного шага.")
+            bot.answer_callback_query(query.id)
+            return
+        steps_list = "\n".join(f"{i+1}. {step['name']} (Прибор: {step['equipment']}, Время: {step['timing']})" 
+                               for i, step in enumerate(user_steps[user_id]))
     bot.send_message(user_id, f"Ваши шаги:\n{steps_list}\n\n"
                               "Теперь укажите порядок выполнения в формате:\n"
                               "В одной строчке пишется те шаги, которые выполняются последовательно\n"
@@ -274,20 +288,25 @@ def apply_step_order(message):
         bot.send_message(user_id, "Ошибка: Укажите номера шагов числами через пробел в каждой строке.")
         return
 
-    total_steps = len(user_steps[user_id])
-    
-    if len(all_indices) != total_steps or max(all_indices, default=-1) >= total_steps or min(all_indices, default=0) < 0:
-        bot.send_message(user_id, "Ошибка: Указаны неверные, пропущенные или повторяющиеся номера шагов.")
-        return
+    with get_user_lock(user_id):
+        total_steps = len(user_steps[user_id])
+        
+        if len(all_indices) != total_steps or max(all_indices, default=-1) >= total_steps or min(all_indices, default=0) < 0:
+            bot.send_message(user_id, "Ошибка: Указаны неверные, пропущенные или повторяющиеся номера шагов.")
+            return
 
-    task = user_tasks[user_id]
-    task.stages = [[user_steps[user_id][i] for i in branch] for branch in branches]
-    
-    template_id = db.add_template(task.name, task.description, task.stages)
-    db.assign_task_to_user(templates_id=template_id, user_id=user_id)
+        task = user_tasks[user_id]
+        task.stages = [[user_steps[user_id][i] for i in branch] for branch in branches]
+        
+        template_id = db.add_template(task.name, task.description, task.stages)
+        db.assign_task_to_user(templates_id=template_id, user_id=user_id)
 
-    del user_steps[user_id]
-    del user_tasks[user_id]
+        # Очистка временных данных
+        del user_steps[user_id]
+        del user_tasks[user_id]
+        # Удаляем блокировку для пользователя после завершения
+        if user_id in user_locks:
+            del user_locks[user_id]
 
     confirmation = f"Задача '{task.name}' успешно сохранена со стадиями:\n"
     for i, branch in enumerate(branches, 1):
@@ -505,7 +524,7 @@ def my_tasks(query):
     if not reserved_steps:
         bot.send_message(query.from_user.id, "У вас нет забронированных шагов.")
     else:
-        # Deduplicate steps
+        # Deduplicate steps (оставлено как в оригинале)
         seen = set()
         unique_steps = []
         for step in reserved_steps:
